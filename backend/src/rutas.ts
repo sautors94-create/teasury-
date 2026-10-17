@@ -77,7 +77,7 @@ export function crearRouter(db: Database): Router {
       const like = `%${q.trim()}%`;
       params.push(like, like, like);
     }
-    const where = filtros.length ? awHERE ${filtros.join(" AND ")}` : "";
+    const where = filtros.length ? `WHERE ${filtros.join(" AND ")}` : "";
     const filas = db
       .prepare(
         `SELECT o.*, u.nombre AS capturista
