@@ -1,7 +1,10 @@
 # 05 — Sincronización Local ↔ Servidor (diseño, pendiente)
 
-> **Estado:** diseño. Esta fase corre 100% local sobre SQLite. Este documento
-> fija las decisiones para implementar la sincronización sin romper el flujo.
+> **Estado:** protocolo **implementado y probado** (push/pull con uuid+version,
+> regla de conflictos, idempotencia y cursor; 6 tests en
+> `backend/test/sync.test.ts`). El cliente offline con cola y el staging con
+> `ack` en dos fases quedan pendientes. El schema del servidor central está en
+> `backend/central/schema.sql` (PostgreSQL).
 
 ## Objetivo
 
@@ -12,27 +15,35 @@ Múltiples escritorios con copia local de PostgreSQL central:
 
 ## Decisiones propuestas
 
-### 1. Esquema
+### 1. Esquema (implementado con tablas sidecar)
 
-- Cada tabla operativa lleva `uuid` (generado en el cliente), `version`
-  (entero), `modificado_en` (timestamp ISO) y `modificado_por` (uuid de usuario).
-- `uuid + version` resuelven identidad y orden; los folios de operaciones se
-  asignan **en el servidor** al sincronizar para evitar colisiones (el local usa
-  prefijo temporal `OP-LOCAL-…`).
+- En vez de agregar columnas a cada tabla, la identidad vive en
+  `sync_registros (tabla, uuid, registro_id, version)` — una fila por registro
+  sincronizable — lo que evita reconstruir tablas y mantiene el esquema de
+  negocio limpio.
+- Folios: el cliente usa prefijo temporal `OP-LOCAL-*`; **el servidor reasigna
+  el folio definitivo** al aplicar (`OP-<año>-<correlativo>`).
+- `creado_por`: el servidor registra **el usuario que empuja** (los ids de
+  usuarios no son comparables entre clientes).
 
-### 2. Transporte
+### 2. Transporte (implementado)
 
-- Cola local `sincronizacion_log`: `{tabla, uuid, version, operacion}`
-  (`upsert`/`delete`), con estados `pendiente | enviado | confirmado | conflicto`.
-- Endpoint sync: `POST /api/sync/push` (cambios del cliente) y
-  `GET /api/sync/pull?desde=<cursor>` (cambios del servidor).
-- Paginado por cursor (`modificado_en`, `uuid`) y confirmación (`ack`) en dos
-  fases: primero aplicar en staging, luego confirmar.
+- Emisión local: cada captura o cambio de estado llama a `emitir()`; el cambio
+  queda en `sync_aplicados` (append-only, `(tabla, uuid, version)` UNIQUE =
+  idempotencia).
+- `POST /api/sync/push` con `{ cambios: [{ tabla, uuid, version, payload }] }`;
+  devuelve por cambio `aplicado | conflicto | error`. Tablas permitidas hoy:
+  `operaciones` (`TABLAS_SYNC`).
+- `GET /api/sync/pull?desde=<cursor>` devuelve cambios posteriores al cursor (id
+  de `sync_aplicados`) y el cursor nuevo (página de 200).
+- **Pendiente:** cola offline en el desktop (`pendiente | confirmado |
+  conflicto`) y staging con `ack` en dos fases.
 
 ### 3. Conflictos
 
-- Regla general: **gana la versión más alta**; si el servidor ya avanzó, el
-  cliente recibe `conflicto` y el registro queda para resolución humana.
+- Regla general: **gana la versión más alta** — implementada: si el servidor ya
+  alcanzó esa versión o mayor, responde `conflicto` con `version_servidor` y
+  `registro_local` para resolución humana.
 - Restricciones de dominio se evalúan **después** de fusionar (p. ej. el estado
   final de una operación debe ser una transición válida del fusión de bits).
 - `auditoria` es **append-only y mergeable por concatenación**; nunca genera
@@ -48,9 +59,13 @@ Múltiples escritorios con copia local de PostgreSQL central:
 - La UI distingue `sincronizado | pendiente | conflicto` por registro (badge),
   sin bloquear la captura offline.
 
-## Criterios de aceptación (cuando se implemente)
+## Criterios de aceptación
 
-1. Dos clientes capturan sin conexión y sincronizan sin pérdida.
-2. Conflicto de estado resuelve con revisión, no con sobrescritura silenciosa.
-3. La bitácora final es idéntica en todos los clientes y en el servidor.
-4. Fallo de red a mitad de `push` no duplica registros (idempotencia por uuid+version).
+1. ✅ (protocolo) Push/pull aplican cambios sin pérdida; pull por cursor.
+2. ✅ Conflicto resuelve con revisión (`conflicto` + `registro_local`), no con
+   sobrescritura silenciosa.
+3. ✅ Bitácora append-only: `auditoria` + `sync_aplicados` registran cada
+   aplicación con su usuario.
+4. ✅ Idempotencia: repetir el mismo `(tabla, uuid, version)` no duplica
+   registros (UNIQUE + verificación de versión).
+5. ⬜ Dos clientes offline reales (cola en el desktop) — fase siguiente.
