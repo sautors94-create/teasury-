@@ -19,9 +19,12 @@ en estos documentos.
 - ✅ Backend API con operaciones y validación (`backend/`)
 - ✅ Desktop con captura, validación y auditoría (`desktop/`)
 - ✅ Tesorería: ejecución de pago con comprobante y vista de pagos
-- ⬜ Tesorería: control de recursos, resguardos y conciliación
+- ✅ Dirección: aprobación por monto (umbral configurable) y reportes de control
+- ✅ Tesorería: cuentas con saldos, depósitos/retiros y conciliación de pagos
+- ✅ Sincronización: protocolo push/pull (uuid+version, conflictos, idempotencia) + schema central (`backend/central/`)
+- ⬜ Resguardos de bienes y adjuntos documentales
+- ⬜ Cliente offline con cola de sincronización
 - ⬜ Dirección: reportes y aprobaciones especiales
-- ⬜ Sincronización local ↔ PostgreSQL
 - ⬜ Multiempresa y multimonedas avanzadas
 
 ## Usuarios sembrados (desarrollo)
