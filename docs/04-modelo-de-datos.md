@@ -61,9 +61,25 @@ la pista de auditoría de la decisión.
 
 **Nunca se actualizan ni borran filas de `auditoria`.** Índice por operación.
 
+## pagos (uno a uno con operación pagada)
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| id | INTEGER PK | |
+| operacion_id | INTEGER UNIQUE FK → operaciones | garantiza el no-doble-pago |
+| medio | TEXT | CHECK: transferencia, domiciliacion, cheque, efectivo, otro |
+| monto | REAL | CHECK: > 0; debe coincidir con el monto de la operación |
+| moneda | TEXT | heredada de la operación |
+| fecha_pago | TEXT | `YYYY-MM-DD` |
+| comprobante | TEXT | folio o referencia del comprobante |
+| notas | TEXT | default `''` |
+| pagado_por | FK → usuarios | rol tesoreria |
+| fecha_registro | TEXT | `datetime('now')` |
+
+INDEX: `idx_pagos_fecha`.
+
 ## Entidades futuras (esta fase no las implementa)
 
-- `pagos` (monto ejecutado, fecha, medio, comprobante) → estado `pagada`.
 - `adjuntos` (archivos por operación: contratos, facturas, comprobantes).
 - `tipos_cambio` y `cuentas` / `resguardos` (control de recursos).
 - `financiamientos` (líneas, cortes, saldos).

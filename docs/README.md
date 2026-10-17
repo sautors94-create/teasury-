@@ -18,7 +18,8 @@ en estos documentos.
 
 - ✅ Backend API con operaciones y validación (`backend/`)
 - ✅ Desktop con captura, validación y auditoría (`desktop/`)
-- ⬜ Tesorería: pagos, comprobantes y control de recursos
+- ✅ Tesorería: ejecución de pago con comprobante y vista de pagos
+- ⬜ Tesorería: control de recursos, resguardos y conciliación
 - ⬜ Dirección: reportes y aprobaciones especiales
 - ⬜ Sincronización local ↔ PostgreSQL
 - ⬜ Multiempresa y multimonedas avanzadas
