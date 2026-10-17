@@ -31,7 +31,7 @@ export function crearRouter(db: Database): Router {
     res.json({ ok: true, servicio: "teasury-backend", version: "0.1.0" });
   });
 
-  // ---- Catalogos ----
+  // ---- Catálogos ----
   r.get("/catalogos", autenticar, (_req, res) => {
     res.json({
       estados: Object.entries(TRANSICIONES).map(([estado, permitidas]) => ({ estado, permitidas })),
@@ -41,7 +41,7 @@ export function crearRouter(db: Database): Router {
     });
   });
 
-  // ---- Autenticacion ----
+  // ---- Autenticación ----
   r.post("/auth/login", (req, res) => {
     const { username, password } = req.body ?? {};
     if (typeof username !== "string" || typeof password !== "string") {
@@ -52,7 +52,7 @@ export function crearRouter(db: Database): Router {
       .prepare("SELECT * FROM usuarios WHERE username = ? AND activo = 1")
       .get(username) as FilaUsuario | undefined;
     if (!u || !bcrypt.compareSync(password, u.password_hash)) {
-      res.status(401).json({ error: "Credenciales invalidas" });
+      res.status(401).json({ error: "Credenciales inválidas" });
       return;
     }
     const usuario = { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol };
@@ -91,14 +91,14 @@ export function crearRouter(db: Database): Router {
   r.post("/operaciones", autenticar, requiereRol("operacion"), (req, res) => {
     const { tipo, concepto, proveedor, monto, moneda, fecha_operacion } = req.body ?? {};
     const errores: string[] = [];
-    if (!["pago", "cobro", "financiamiento"].includes(tipo)) errores.push("tipo invalido (pago|cobro|financiamiento)");
+    if (!["pago", "cobro", "financiamiento"].includes(tipo)) errores.push("tipo inválido (pago|cobro|financiamiento)");
     if (typeof concepto !== "string" || !concepto.trim()) errores.push("concepto requerido");
     if (typeof proveedor !== "string" || !proveedor.trim()) errores.push("proveedor requerido");
     if (typeof monto !== "number" || !(monto > 0)) errores.push("monto debe ser mayor a 0");
     if (typeof fecha_operacion !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fecha_operacion))
       errores.push("fecha_operacion en formato YYYY-MM-DD");
     if (errores.length) {
-      res.status(400).json({ error: "Datos invalidos", detalles: errores });
+      res.status(400).json({ error: "Datos inválidos", detalles: errores });
       return;
     }
     const correlativo = (db.prepare("SELECT COALESCE(MAX(id), 0) + 1 AS n FROM operaciones").get() as { n: number }).n;
@@ -109,7 +109,7 @@ export function crearRouter(db: Database): Router {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(folio, tipo, concepto.trim(), proveedor.trim(), monto, moneda ?? "MXN", fecha_operacion, req.usuario!.id);
-    registrarAuditoria(db, req.usuario!.id, "captura", `Captura de la operacion ${folio}`, Number(resultado.lastInsertRowid));
+    registrarAuditoria(db, req.usuario!.id, "captura", `Captura de la operación ${folio}`, Number(resultado.lastInsertRowid));
     emitir(db, "operaciones", Number(resultado.lastInsertRowid), req.usuario!.id);
     const op = db.prepare("SELECT * FROM operaciones WHERE id = ?").get(resultado.lastInsertRowid);
     res.status(201).json({ operacion: op });
@@ -119,7 +119,7 @@ export function crearRouter(db: Database): Router {
     const id = Number(req.params.id);
     const op = db.prepare("SELECT * FROM operaciones WHERE id = ?").get(id) as Operacion | undefined;
     if (!op) {
-      res.status(404).json({ error: "Operacion no encontrada" });
+      res.status(404).json({ error: "Operación no encontrada" });
       return;
     }
     const revisiones = db
@@ -145,7 +145,7 @@ export function crearRouter(db: Database): Router {
       | Operacion
       | undefined;
     if (!op) {
-      res.status(404).json({ error: "Operacion no encontrada" });
+      res.status(404).json({ error: "Operación no encontrada" });
       return;
     }
     try {
@@ -170,17 +170,17 @@ export function crearRouter(db: Database): Router {
       | Operacion
       | undefined;
     if (!op) {
-      res.status(404).json({ error: "Operacion no encontrada" });
+      res.status(404).json({ error: "Operación no encontrada" });
       return;
     }
     if (op.estado !== "en_validacion") {
-      res.status(409).json({ error: `La operacion está en '${op.estado}', se requiere 'en_validacion'` });
+      res.status(409).json({ error: `La operación está en '${op.estado}', se requiere 'en_validacion'` });
       return;
     }
     db.prepare(
       "INSERT INTO revisiones (operacion_id, revisor_id, resultado, comentario) VALUES (?, ?, ?, ?)"
     ).run(op.id, req.usuario!.id, resultado, comentario.trim());
-    // Sobre el umbral, aprobar deja la operacion pendiente de Direccion.
+    // Sobre el umbral, aprobar deja la operación pendiente de Dirección.
     const destino: EstadoOperacion =
       resultado === "aprobada"
         ? op.monto >= UMBRAL_DIRECCION
@@ -200,7 +200,7 @@ export function crearRouter(db: Database): Router {
       | Operacion
       | undefined;
     if (!op) {
-      res.status(404).json({ error: "Operacion no encontrada" });
+      res.status(404).json({ error: "Operación no encontrada" });
       return;
     }
     try {
@@ -211,7 +211,7 @@ export function crearRouter(db: Database): Router {
     }
   });
 
-  // ---- Direccion: aprobacion por monto y reportes ----
+  // ---- Dirección: aprobación por monto y reportes ----
   r.post("/operaciones/:id/aprobacion-direccion", autenticar, requiereRol("direccion"), (req, res) => {
     const { aprobado, comentario } = req.body ?? {};
     if (typeof aprobado !== "boolean") {
@@ -226,12 +226,12 @@ export function crearRouter(db: Database): Router {
       | Operacion
       | undefined;
     if (!op) {
-      res.status(404).json({ error: "Operacion no encontrada" });
+      res.status(404).json({ error: "Operación no encontrada" });
       return;
     }
     if (op.estado !== "pendiente_direccion") {
       res.status(409).json({
-        error: `La operacion está en '${op.estado}', se requiere 'pendiente_direccion'`,
+        error: `La operación está en '${op.estado}', se requiere 'pendiente_direccion'`,
       });
       return;
     }
@@ -239,7 +239,7 @@ export function crearRouter(db: Database): Router {
       db,
       req.usuario!.id,
       "aprobacion_direccion",
-      `${aprobado ? "Aprobo" : "Rechazo"} Direccion: ${comentario.trim()}`,
+      `${aprobado ? "Aprobó" : "Rechazó"} Dirección: ${comentario.trim()}`,
       op.id
     );
     try {
@@ -292,11 +292,11 @@ export function crearRouter(db: Database): Router {
     });
   });
 
-  // ---- Tesoreria: pago con comprobante ----
+  // ---- Tesorería: pago con comprobante ----
   r.post("/operaciones/:id/pago", autenticar, requiereRol("tesoreria"), (req, res) => {
     const { medio, monto, fecha_pago, comprobante, notas, cuenta_id } = req.body ?? {};
     const errores: string[] = [];
-    if (!MEDIOS_PAGO.includes(medio)) errores.push(`medio invalido (${MEDIOS_PAGO.join(" | ")})`);
+    if (!MEDIOS_PAGO.includes(medio)) errores.push(`medio inválido (${MEDIOS_PAGO.join(" | ")})`);
     if (typeof monto !== "number" || !(monto > 0)) errores.push("monto debe ser mayor a 0");
     if (typeof comprobante !== "string" || !comprobante.trim())
       errores.push("comprobante (folio o referencia) requerido");
@@ -304,7 +304,7 @@ export function crearRouter(db: Database): Router {
     if (typeof fecha !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fecha))
       errores.push("fecha_pago en formato YYYY-MM-DD");
     if (errores.length) {
-      res.status(400).json({ error: "Datos invalidos", detalles: errores });
+      res.status(400).json({ error: "Datos inválidos", detalles: errores });
       return;
     }
 
@@ -313,7 +313,7 @@ export function crearRouter(db: Database): Router {
         | { id: number; activa: number }
         | undefined;
       if (!cuenta || !cuenta.activa) {
-        res.status(400).json({ error: "cuenta_id invalida o inactiva" });
+        res.status(400).json({ error: "cuenta_id inválida o inactiva" });
         return;
       }
     }
@@ -322,16 +322,16 @@ export function crearRouter(db: Database): Router {
       | Operacion
       | undefined;
     if (!op) {
-      res.status(404).json({ error: "Operacion no encontrada" });
+      res.status(404).json({ error: "Operación no encontrada" });
       return;
     }
     if (op.estado !== "aprobada") {
-      res.status(409).json({ error: `La operacion está en '${op.estado}', se requiere 'aprobada'` });
+      res.status(409).json({ error: `La operación está en '${op.estado}', se requiere 'aprobada'` });
       return;
     }
     if (Math.abs(monto - op.monto) > 0.005) {
       res.status(400).json({
-        error: `El monto del pago (${monto}) debe coincidir con el monto de la operacion (${op.monto})`,
+        error: `El monto del pago (${monto}) debe coincidir con el monto de la operación (${op.monto})`,
         monto_operacion: op.monto,
       });
       return;
@@ -394,7 +394,7 @@ export function crearRouter(db: Database): Router {
              (c.saldo_inicial
                - COALESCE((SELECT SUM(p.monto) FROM pagos p WHERE p.cuenta_id = c.id), 0)
                + COALESCE((SELECT SUM(CASE WHEN m.tipo = 'deposito' THEN m.monto ELSE -m.monto END)
-                           FROM_movimientos_cuentas m WHERE m.cuenta_id = c.id), 0)
+                           FROM movimientos_cuentas m WHERE m.cuenta_id = c.id), 0)
              ) AS saldo_actual,
              COALESCE((SELECT SUM(p.monto) FROM pagos p WHERE p.cuenta_id = c.id), 0) AS total_pagado
            FROM cuentas c WHERE c.activa = 1 ORDER BY c.id`
@@ -409,12 +409,12 @@ export function crearRouter(db: Database): Router {
     const errores: string[] = [];
     if (typeof nombre !== "string" || !nombre.trim()) errores.push("nombre requerido");
     if (typeof saldo_inicial !== "undefined" && typeof saldo_inicial !== "number")
-      errores.push("saldo_inicial debe ser numerico");
+      errores.push("saldo_inicial debe ser numérico");
     if (typeof banco !== "undefined" && typeof banco !== "string") errores.push("banco debe ser texto");
     if (typeof numero_cuenta !== "undefined" && typeof numero_cuenta !== "string")
       errores.push("numero_cuenta debe ser texto");
     if (errores.length) {
-      res.status(400).json({ error: "Datos invalidos", detalles: errores });
+      res.status(400).json({ error: "Datos inválidos", detalles: errores });
       return;
     }
     const raiz = db
@@ -461,13 +461,13 @@ export function crearRouter(db: Database): Router {
   r.post("/cuentas/:id/movimientos", autenticar, requiereRol("tesoreria"), (req, res) => {
     const { tipo, monto, concepto, fecha } = req.body ?? {};
     const errores: string[] = [];
-    if (!["deposito", "retiro"].includes(tipo)) errores.push("tipo invalido (deposito | retiro)");
+    if (!["deposito", "retiro"].includes(tipo)) errores.push("tipo inválido (deposito | retiro)");
     if (typeof monto !== "number" || !(monto > 0)) errores.push("monto debe ser mayor a 0");
     if (typeof concepto !== "string" || !concepto.trim()) errores.push("concepto requerido");
     const f = fecha ?? new Date().toISOString().slice(0, 10);
     if (typeof f !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(f)) errores.push("fecha en formato YYYY-MM-DD");
     if (errores.length) {
-      res.status(400).json({ error: "Datos invalidos", detalles: errores });
+      res.status(400).json({ error: "Datos inválidos", detalles: errores });
       return;
     }
     const cuenta = db.prepare("SELECT id, activa FROM cuentas WHERE id = ?").get(Number(req.params.id)) as
@@ -492,7 +492,7 @@ export function crearRouter(db: Database): Router {
     res.status(201).json({ movimiento: mov });
   });
 
-  // ---- Sincronizacion (protocolo uuid + version, ver docs/05) ----
+  // ---- Sincronización (protocolo uuid + version, ver docs/05) ----
   r.post(
     "/sync/push",
     autenticar,
@@ -547,12 +547,12 @@ export function crearRouter(db: Database): Router {
               estado: "conflicto",
               version_servidor: mapa.version,
               registro_local: local,
-              detalle: "gana la version mayor; resolucion humana requerida",
+              detalle: "gana la versión menor; resolución humana requerida",
             });
             continue;
           }
 
-          // El usuario del empujon es el responsable registrado en el servidor.
+          // El usuario del empujón es el responsable registrado en el servidor.
           campos.creado_por = req.usuario!.id;
           let accion = "update";
           let registroId: number;
@@ -615,7 +615,7 @@ export function crearRouter(db: Database): Router {
     });
   });
 
-  // ---- Auditoria ----
+  // ---- Auditoría ----
   r.get("/auditoria", autenticar, requiereRol("auditoria", "direccion"), (_req, res) => {
     const filas = db
       .prepare(
