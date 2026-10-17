@@ -74,13 +74,42 @@ la pista de auditoría de la decisión.
 | comprobante | TEXT | folio o referencia del comprobante |
 | notas | TEXT | default `''` |
 | pagado_por | FK → usuarios | rol tesoreria |
+| cuenta_id | FK → cuentas, anulable | descuenta del saldo de la cuenta |
 | fecha_registro | TEXT | `datetime('now')` |
 
 INDEX: `idx_pagos_fecha`.
 
+## cuentas (control de recursos)
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| id | INTEGER PK | |
+| nombre | TEXT | requerido |
+| banco / numero_cuenta | TEXT | informativos |
+| saldo_inicial | REAL | punto de partida |
+| activa | INTEGER | 1/0 |
+| creado_en | TEXT | `datetime('now')` |
+
+**Saldo actual** = `saldo_inicial − SUM(pagos.cuenta_id) + depósitos − retiros`
+(vista calculada en `GET /api/cuentas`).
+
+## movimientos_cuentas (depósitos y retiros)
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| id | INTEGER PK | |
+| cuenta_id | FK → cuentas | |
+| tipo | TEXT | CHECK: deposito, retiro |
+| monto | REAL | CHECK: > 0 (el signo lo da el tipo) |
+| concepto / fecha | TEXT | requerido / `YYYY-MM-DD` |
+| creado_por / creado_en | FK / TEXT | quién y cuándo |
+
+INDEX: `idx_movimientos_cuenta`.
+
 ## Entidades futuras (esta fase no las implementa)
 
+- `resguardos` (custodia de bienes y responsables).
 - `adjuntos` (archivos por operación: contratos, facturas, comprobantes).
-- `tipos_cambio` y `cuentas` / `resguardos` (control de recursos).
+- `tipos_cambio` (multimoneda) y catálogo de bancos.
 - `financiamientos` (líneas, cortes, saldos).
 - `sincronizacion_log` (cambios pendientes de subir/bajar, ver doc 05).
