@@ -1,4 +1,14 @@
-import type { Evento, MedioPago, Operacion, Pago, Revision, Usuario } from "./tipos";
+import type {
+  Cuenta,
+  Evento,
+  MedioPago,
+  MovimientoCuenta,
+  Operacion,
+  Pago,
+  ReporteDireccion,
+  Revision,
+  Usuario,
+} from "./tipos";
 
 let token: string | null = localStorage.getItem("token");
 
@@ -70,6 +80,7 @@ export const api = {
       comprobante: string;
       fecha_pago?: string;
       notas?: string;
+      cuenta_id?: number | null;
     }
   ) =>
     solicitar<{ operacion: Operacion; pago: Pago }>(`/operaciones/${id}/pago`, {
@@ -77,5 +88,24 @@ export const api = {
       body: JSON.stringify(datos),
     }),
   pagos: () => solicitar<{ pagos: Pago[] }>("/pagos"),
+  reportesDireccion: () => solicitar<ReporteDireccion>("/reportes/direccion"),
+  cuentas: () => solicitar<{ cuentas: Cuenta[] }>("/cuentas"),
+  detalleCuenta: (id: number) =>
+    solicitar<{ cuenta: Cuenta; movimientos: MovimientoCuenta[] }>(`/cuentas/${id}`),
+  crearCuenta: (datos: { nombre: string; banco?: string; numero_cuenta?: string; saldo_inicial?: number }) =>
+    solicitar<{ cuenta: Cuenta }>("/cuentas", { method: "POST", body: JSON.stringify(datos) }),
+  crearMovimiento: (
+    id: number,
+    datos: { tipo: "deposito" | "retiro"; monto: number; concepto: string; fecha?: string }
+  ) =>
+    solicitar<{ movimiento: unknown }>(`/cuentas/${id}/movimientos`, {
+      method: "POST",
+      body: JSON.stringify(datos),
+    }),
+  aprobarDireccion: (id: number, aprobado: boolean, comentario: string) =>
+    solicitar<{ operacion: Operacion }>(`/operaciones/${id}/aprobacion-direccion`, {
+      method: "POST",
+      body: JSON.stringify({ aprobado, comentario }),
+    }),
   auditoria: () => solicitar<{ eventos: Evento[] }>("/auditoria"),
 };
