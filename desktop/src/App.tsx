@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { api, getToken, setToken } from "./api";
 import {
   ETIQUETAS_ESTADO,
+  MEDIOS_PAGO,
   type Estado,
   type Evento,
+  type MedioPago,
   type Operacion,
+  type Pago,
   type Revision,
   type Usuario,
 } from "./tipos";
@@ -19,7 +22,7 @@ const ESTADOS: Array<Estado | ""> = [
   "cancelada",
 ];
 
-type Vista = "operaciones" | "captura" | "auditoria";
+type Vista = "operaciones" | "captura" | "pagos" | "auditoria";
 
 export default function App() {
   const [usuario, setUsuario] = useState<Usuario | null>(null);
@@ -65,6 +68,11 @@ export default function App() {
             Nueva operación
           </button>
         )}
+        {(usuario.rol === "tesoreria" || usuario.rol === "direccion" || usuario.rol === "auditoria") && (
+          <button className={vista === "pagos" ? "activo" : ""} onClick={() => setVista("pagos")}>
+            Pagos
+          </button>
+        )}
         {(usuario.rol === "auditoria" || usuario.rol === "direccion") && (
           <button className={vista === "auditoria" ? "activo" : ""} onClick={() => setVista("auditoria")}>
             Auditoría
@@ -91,6 +99,7 @@ export default function App() {
             onError={setError}
           />
         )}
+        {vista === "pagos" && <VistaPagos />}
         {vista === "auditoria" && <VistaAuditoria />}
       </main>
     </div>
@@ -158,8 +167,16 @@ function VistaOperaciones({
     operacion: Operacion;
     revisiones: Revision[];
     historial: Evento[];
+    pago: Pago | null;
   } | null>(null);
   const [comentario, setComentario] = useState("");
+  const [pagoForm, setPagoForm] = useState({
+    medio: "transferencia" as MedioPago,
+    monto: "",
+    comprobante: "",
+    fecha: new Date().toISOString().slice(0, 10),
+    notas: "",
+  });
   const [mensaje, setMensaje] = useState("");
 
   const cargar = useCallback(async () => {
@@ -180,7 +197,15 @@ function VistaOperaciones({
     setMensaje("");
     setSeleccion(id);
     try {
-      setDetalle(await api.detalle(id));
+      const d = await api.detalle(id);
+      setDetalle(d);
+      setPagoForm((f) => ({
+        ...f,
+        medio: "transferencia",
+        monto: String(d.operacion.monto),
+        comprobante: "",
+        notas: "",
+      }));
     } catch (err) {
       onError((err as Error).message);
     }
@@ -334,6 +359,103 @@ function VistaOperaciones({
               </>
             )}
 
+            {(op.estado === "aprobada" || op.estado === "pagada") && (
+              <>
+                <h3>Tesorería</h3>
+                {usuario.rol === "tesoreria" && !detalle.pago && (
+                  <>
+                    <div className="rejilla">
+                      <div>
+                        <label>Medio de pago</label>
+                        <select
+                          value={pagoForm.medio}
+                          onChange={(e) => setPagoForm({ ...pagoForm, medio: e.target.value as MedioPago })}
+                        >
+                          {MEDIOS_PAGO.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label>Monto (debe coincidir con la operación)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          value={pagoForm.monto}
+                          onChange={(e) => setPagoForm({ ...pagoForm, monto: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label>Fecha de pago</label>
+                        <input
+                          type="date"
+                          value={pagoForm.fecha}
+                          onChange={(e) => setPagoForm({ ...pagoForm, fecha: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label>Comprobante (folio / referencia)</label>
+                        <input
+                          value={pagoForm.comprobante}
+                          onChange={(e) => setPagoForm({ ...pagoForm, comprobante: e.target.value })}
+                          placeholder="TRF-123456"
+                        />
+                      </div>
+                    </div>
+                    <label>Notas</label>
+                    <textarea
+                      rows={2}
+                      value={pagoForm.notas}
+                      onChange={(e) => setPagoForm({ ...pagoForm, notas: e.target.value })}
+                    />
+                    <div className="barra">
+                      <button
+                        className="btn exito"
+                        onClick={() =>
+                          void accion(
+                            api.pagar(op.id, {
+                              medio: pagoForm.medio,
+                              monto: Number(pagoForm.monto),
+                              comprobante: pagoForm.comprobante,
+                              fecha_pago: pagoForm.fecha,
+                              notas: pagoForm.notas,
+                            }),
+                            "Pago registrado."
+                          )
+                        }
+                      >
+                        Registrar pago
+                      </button>
+                    </div>
+                  </>
+                )}
+                {detalle.pago && (
+                  <p>
+                    <strong>Estado del pago:</strong> liquidado
+                    <br />
+                    <strong>Medio:</strong> {detalle.pago.medio}
+                    <br />
+                    <strong>Monto:</strong>{" "}
+                    {detalle.pago.monto.toLocaleString("es-MX", { minimumFractionDigits: 2 })}{" "}
+                    {detalle.pago.moneda}
+                    <br />
+                    <strong>Fecha de pago:</strong> {detalle.pago.fecha_pago}
+                    <br />
+                    <strong>Comprobante:</strong> {detalle.pago.comprobante}
+                    {detalle.pago.notas && (
+                      <>
+                        <br />
+                        <strong>Notas:</strong> {detalle.pago.notas}
+                      </>
+                    )}
+                  </p>
+                )}
+              </>
+            )}
+
             {detalle.revisiones.length > 0 && (
               <>
                 <h3>Revisiones</h3>
@@ -441,6 +563,69 @@ function VistaCaptura({ onCreada, onError }: { onCreada: () => void; onError: (m
           {guardando ? "Guardando…" : "Guardar en borrador"}
         </button>
       </form>
+    </>
+  );
+}
+
+function VistaPagos() {
+  const [pagos, setPagos] = useState<Pago[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .pagos()
+      .then(({ pagos }) => setPagos(pagos))
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const total = pagos.reduce((s, p) => s + p.monto, 0);
+
+  return (
+    <>
+      <h2>Pagos ejecutados</h2>
+      {error && <div className="error">{error}</div>}
+      <div className="panel">
+        <table>
+          <thead>
+            <tr>
+              <th>Folio</th>
+              <th>Fecha</th>
+              <th>Medio</th>
+              <th style={{ textAlign: "right" }}>Monto</th>
+              <th>Comprobante</th>
+              <th>Pagado por</th>
+              <th>Notas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagos.map((p) => (
+              <tr key={p.id}>
+                <td>{p.folio}</td>
+                <td>{p.fecha_pago}</td>
+                <td style={{ textTransform: "capitalize" }}>{p.medio}</td>
+                <td style={{ textAlign: "right" }}>
+                  {p.monto.toLocaleString("es-MX", { minimumFractionDigits: 2 })} {p.moneda}
+                </td>
+                <td>{p.comprobante}</td>
+                <td>{p.pagador ?? "—"}</td>
+                <td>{p.notas || "—"}</td>
+              </tr>
+            ))}
+            {pagos.length === 0 && (
+              <tr>
+                <td colSpan={7} className="vacio">
+                  Sin pagos registrados.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        {pagos.length > 0 && (
+          <p style={{ textAlign: "right", fontWeight: 600, marginBottom: 0 }}>
+            Total pagado ({pagos.length}): {total.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+          </p>
+        )}
+      </div>
     </>
   );
 }
