@@ -11,9 +11,15 @@
               ┌───────────────┐   observada   ┌──────────┐ │
               │ en_validacion │──────────────►│observada │─┘
               └───────┬───────┘               └──────────┘
-                 aprobada│
+           monto >= umbral│
+              (aprobada │ aprueba)         (monto < umbral:
+                       ▼                   aprueba → aprobada)
+              ┌──────────────────┐
+              │pendiente_direccion│
+              └───────┬──────────┘
+          Dirección aprueba│    Dirección rechaza → observada
                        ▼ ┌──────────┐  (pago — Tesorería,
-               ┌──────────┐         │   fuera de esta fase)
+               ┌──────────┐         │   sólo desde aprobada)
                │ aprobada ├─────────┼──► pagada
                └────┬─────┘         │
                     └──► cancelada ◄┘ (desde borrador/observada, u
@@ -26,8 +32,9 @@
 |---|---|---|
 | `borrador` | Capturada, aún no enviada | Operaciones (al crear) |
 | `en_validacion` | En revisión de Validación | Operaciones (enviar) |
-| `observada` | Rechazada con comentario, rework en Operaciones | Validación |
-| `aprobada` | Validada; lista para pago | Validación |
+| `observada` | Rechazada con comentario, rework en Operaciones | Validación / Dirección |
+| `pendiente_direccion` | Aprobada por Validación pero sobre el umbral; espera a Dirección | Validación (montos ≥ umbral) |
+| `aprobada` | Validada (y por Dirección si aplica); lista para pago | Validación / Dirección |
 | `pagada` | Ejecutada por Tesorería con comprobante | Tesorería (pago) |
 | `cancelada` | Fuera de flujo | Operaciones / Dirección |
 
@@ -38,8 +45,9 @@ Implementado en `TRANSICIONES` (`backend/src/db.ts`):
 | Desde | Hacia |
 |---|---|
 | borrador | en_validacion, cancelada |
-| en_validacion | aprobada, observada |
+| en_validacion | aprobada, observada, pendiente_direccion |
 | observada | en_validacion, cancelada |
+| pendiente_direccion | aprobada, observada |
 | aprobada | pagada |
 | pagada | (terminal) |
 | cancelada | (terminal) |
@@ -56,7 +64,9 @@ transiciones permitidas.
    `observada`. Una operación `aprobada` **no** puede regresar a validación.
 3. **Revisión (Validación):** sólo el rol `validacion` y sólo en estado
    `en_validacion`. El **comentario es obligatorio** tanto al aprobar como al
-   observar (expediente auditables).
+   observar (expediente auditables). Al aprobar, si `monto >= UMBRAL_DIRECCION`
+   (default 500 000, variable de entorno) la operación pasa a
+   `pendiente_direccion`; si no, a `aprobada`.
 4. **Rework:** una operación `observada` vuelve a Operaciones; tras corregirse
    se reenvía y genera una nueva entrada de revisión (el historial conserva
    todas las revisiones).
@@ -73,9 +83,22 @@ transiciones permitidas.
    doble pago también, además de dejar rastro en la bitácora (`pago`).
 8. **Consulta de pagos:** `GET /api/pagos` es visible para `tesoreria`,
    `direccion` y `auditoria`.
+9. **Aprobación por monto (Dirección):** `POST /api/operaciones/:id/aprobacion-direccion`
+   sólo para `direccion`, sólo en `pendiente_direccion`, con `comentario`
+   obligatorio y `aprobado: true|false`. `true` → `aprobada`; `false` →
+   `observada` (vuelve a Operaciones). Se registra `aprobacion_direccion` en la
+   bitácora.
+10. **Reportes de Dirección:** `GET /api/reportes/direccion` (sólo `direccion`)
+   devuelve umbral, totales por estado, pendientes de Dirección y de
+   Tesorería, y pagos de los últimos 30 días.11. **Bloqueo de pago:** Tesorería sólo puede pagar desde `aprobada` (los
+    montos sobre umbral que no pasan por Dirección quedan bloqueados con 409).
+12. **Cuentas y conciliación (Recursos):** el rol `tesoreria` da de alta cuentas
+    (`POST /api/cuentas`) y registra depósitos/retiros
+    (`POST /api/cuentas/:id/movimientos`). Cada pago puede ligarse a una cuenta
+    (`cuenta_id`); el saldo se calcula como `saldo_inicial − pagos + depósitos −
+    retiros`. La lectura de cuentas es de `tesoreria`, `direccion` y `auditoria`.
 
 ## Fases pendientes de este flujo
 
 - Adjuntos documentales por operación (expediente digital).
-- Aprobaciones extraordinarias de Dirección (montos fuera de umbral).
 - Conciliación bancaria y control de resguardos.
