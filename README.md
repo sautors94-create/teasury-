@@ -1,4 +1,4 @@
-﻿# Sistema Integral de Tesorería
+# Sistema Integral de Tesorería
 
 Sistema de gestión y control para el área de Tesorería.
 
@@ -11,12 +11,13 @@ financiamientos y auditoría.
 ## Arquitectura
 
 - Desktop: Electron
-- Backend: Node.js + Express
-- Base de datos central: PostgreSQL
+- Frontend: React + Vite (renderer de Electron, usable también en navegador)
+- Backend: Node.js + Express + TypeScript
+- Base de datos central: PostgreSQL (fase de sincronización)
 - Base de datos local: SQLite
-- Comunicación: API REST
-- Seguridad: autenticación, roles y auditoría
-- Sincronización: local ↔ servidor
+- Comunicación: API REST (JWT + roles)
+- Auditoría: bitácora append-only por operación y usuario
+- Sincronización: local ↔ servidor (diseñada en `docs/05-sincronizacion.md`)
 
 ## Áreas
 
@@ -26,13 +27,43 @@ financiamientos y auditoría.
 - Dirección
 - Auditoría
 
+## Estructura
+
+```
+backend/   API Express: auth, operaciones, validación, auditoría
+desktop/   Electron + React (captura, validación, bitácora)
+docs/      Especificación funcional completa
+```
+
+## Arranque
+
+```bash
+npm install
+npm run dev        # backend (:4000) + renderer (:5173)
+npm run typecheck  # TypeScript en ambos workspaces
+npm test           # tests de la API
+```
+
+ desktop solo (con Electron): `npm run dev -w @teasury/desktop` y luego
+`npm run dev:app -w @teasury/desktop`.
+
+Usuarios sembrados en desarrollo: `operador`, `validador`, `tesoreria`,
+`direccion`, `auditor` (contraseña = usuario).
+
 ## Estado
 
-Proyecto en etapa de diseño funcional.
+Fase 1 (Operaciones + Validación) implementada:
+
+- ✅ Captura con validación de datos y folio automático (`OP-<año>-<corr>`)
+- ✅ Máquina de estados: borrador → en_validación → aprobada / observada
+- ✅ Roles y permisos por endpoint (401 / 403 / 409)
+- ✅ Bitácora de auditoría visible a Auditoría y Dirección
+- ⬜ Tesorería: pagos, comprobantes y control de recursos
+- ⬜ Dirección: reportes y aprobaciones por montos
+- ⬜ Sincronización local ↔ PostgreSQL
 
 ## Documentación
 
 Toda la especificación funcional se encuentra dentro de:
 
 docs/
-"# teasury-" 
