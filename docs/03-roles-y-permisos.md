@@ -26,6 +26,12 @@ El rol viaja dentro del JWT (`req.usuario.rol`) y se verifica con
 | `GET /api/auditoria` (bitácora global) | ❌ | ❌ | ❌ | ✅ | ✅ |
 | Registrar pago (`POST .../pago`, con comprobante) | ❌ | ❌ | ✅ | ❌ | ❌ |
 | `GET /api/pagos` (historial de pagos) | ❌ | ❌ | ✅ | ✅ | ✅ |
+| `POST /api/operaciones/:id/aprobacion-direccion` | ❌ | ❌ | ❌ | ✅ | ❌ |
+| `GET /api/reportes/direccion` (reportes de control) | ❌ | ❌ | ❌ | ✅ | ❌ |
+| `GET /api/cuentas`, `GET /api/cuentas/:id` | ❌ | ❌ | ✅ | ✅ | ✅ |
+| `POST /api/cuentas` (alta) y `POST /api/cuentas/:id/movimientos` | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `POST /api/sync/push` (cambios locales) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `GET /api/sync/pull` (cambios del centro) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 Respuestas:
 
