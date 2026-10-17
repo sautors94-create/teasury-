@@ -1,4 +1,4 @@
-import type { Evento, Operacion, Revision, Usuario } from "./tipos";
+import type { Evento, MedioPago, Operacion, Pago, Revision, Usuario } from "./tipos";
 
 let token: string | null = localStorage.getItem("token");
 
@@ -45,7 +45,7 @@ export const api = {
     return solicitar<{ operaciones: Operacion[] }>(`/operaciones${qs ? `?${qs}` : ""}`);
   },
   detalle: (id: number) =>
-    solicitar<{ operacion: Operacion; revisiones: Revision[]; historial: Evento[] }>(
+    solicitar<{ operacion: Operacion; revisiones: Revision[]; historial: Evento[]; pago: Pago | null }>(
       `/operaciones/${id}`
     ),
   crear: (datos: Partial<Operacion>) =>
@@ -62,5 +62,20 @@ export const api = {
     }),
   cancelar: (id: number) =>
     solicitar<{ operacion: Operacion }>(`/operaciones/${id}/cancelar`, { method: "POST" }),
+  pagar: (
+    id: number,
+    datos: {
+      medio: MedioPago;
+      monto: number;
+      comprobante: string;
+      fecha_pago?: string;
+      notas?: string;
+    }
+  ) =>
+    solicitar<{ operacion: Operacion; pago: Pago }>(`/operaciones/${id}/pago`, {
+      method: "POST",
+      body: JSON.stringify(datos),
+    }),
+  pagos: () => solicitar<{ pagos: Pago[] }>("/pagos"),
   auditoria: () => solicitar<{ eventos: Evento[] }>("/auditoria"),
 };
