@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 import type { EstadoOperacion, Operacion } from "./db.js";
-import { TRANSICIONES } from "./db.js";
+import { emitir, TRANSICIONES } from "./db.js";
 
 export class ErrorDominio extends Error {
   constructor(
@@ -47,6 +47,7 @@ export function cambiarEstado(
     `Estado '${operacion.estado}' → '${destino}'`,
     operacion.id
   );
+  emitir(db, "operaciones", operacion.id, usuarioId);
   return obtenerOperacion(db, operacion.id);
 }
 
