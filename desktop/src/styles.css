@@ -102,6 +102,7 @@ tbody tr.seleccionada { background: #e0ecf9; }
 .badge.borrador { background: #e2e8f0; color: #475569; }
 .badge.en_validacion { background: #dbeafe; color: var(--acento); }
 .badge.observada { background: #fef3c7; color: var(--ambar); }
+.badge.pendiente_direccion { background: #ede9fe; color: #6d28d9; }
 .badge.aprobada, .badge.pagada { background: #dcfce7; color: var(--verde); }
 .badge.cancelada { background: #fee2e2; color: var(--rojo); }
 
