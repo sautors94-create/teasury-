@@ -98,8 +98,22 @@ CREATE TABLE IF NOT EXISTS auditoria (
   fecha         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS pagos (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  operacion_id    INTEGER NOT NULL UNIQUE REFERENCES operaciones(id),
+  medio           TEXT NOT NULL CHECK (medio IN ('transferencia','domiciliacion','cheque','efectivo','otro')),
+  monto           REAL NOT NULL CHECK (monto > 0),
+  moneda          TEXT NOT NULL DEFAULT 'MXN',
+  fecha_pago      TEXT NOT NULL,
+  comprobante     TEXT NOT NULL,
+  notas           TEXT NOT NULL DEFAULT '',
+  pagado_por      INTEGER NOT NULL REFERENCES usuarios(id),
+  fecha_registro  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_operaciones_estado ON operaciones(estado);
 CREATE INDEX IF NOT EXISTS idx_auditoria_operacion ON auditoria(operacion_id);
+CREATE INDEX IF NOT EXISTS idx_pagos_fecha ON pagos(fecha_pago);
 `;
 
 export function abrirBase(ruta: string = RUTA_DB): Database.Database {
@@ -129,6 +143,22 @@ function sembrarUsuarios(db: Database.Database): void {
     // Password por defecto igual al username (cambiar en producción).
     insertar.run(username, bcrypt.hashSync(username, 10), nombre, rol);
   }
+}
+
+export const MEDIOS_PAGO = ["transferencia", "domiciliacion", "cheque", "efectivo", "otro"] as const;
+export type MedioPago = (typeof MEDIOS_PAGO)[number];
+
+export interface Pago {
+  id: number;
+  operacion_id: number;
+  medio: MedioPago;
+  monto: number;
+  moneda: string;
+  fecha_pago: string;
+  comprobante: string;
+  notas: string;
+  pagado_por: number;
+  fecha_registro: string;
 }
 
 export const TRANSICIONES: Record<EstadoOperacion, EstadoOperacion[]> = {

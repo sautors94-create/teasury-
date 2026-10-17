@@ -39,6 +39,24 @@ export interface Revision {
   fecha: string;
 }
 
+export type MedioPago = "transferencia" | "domiciliacion" | "cheque" | "efectivo" | "otro";
+
+export interface Pago {
+  id: number;
+  operacion_id: number;
+  medio: MedioPago;
+  monto: number;
+  moneda: string;
+  fecha_pago: string;
+  comprobante: string;
+  notas: string;
+  pagador?: string;
+  folio?: string;
+  fecha_registro: string;
+}
+
+export const MEDIOS_PAGO: MedioPago[] = ["transferencia", "domiciliacion", "cheque", "efectivo", "otro"];
+
 export interface Evento {
   id: number;
   usuario: string;

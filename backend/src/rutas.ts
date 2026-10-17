@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import type { Database } from "better-sqlite3";
 import { autenticar, firmarToken, requiereRol } from "./auth.js";
 import { cambiarEstado, ErrorDominio, registrarAuditoria } from "./dominio.js";
-import { TRANSICIONES, type Operacion, type Revision, type Rol } from "./db.js";
+import { MEDIOS_PAGO, TRANSICIONES, type Operacion, type Revision, type Rol } from "./db.js";
 
 interface FilaUsuario {
   id: number;
@@ -122,7 +122,10 @@ export function crearRouter(db: Database): Router {
          WHERE a.operacion_id = ? ORDER BY a.id`
       )
       .all(id);
-    res.json({ operacion: op, revisiones, historial });
+    const pago =
+      (db.prepare("SELECT * FROM pagos WHERE operacion_id = ?").get(id) as import("./db.js").Pago | undefined) ??
+      null;
+    res.json({ operacion: op, revisiones, historial, pago });
   });
 
   r.post("/operaciones/:id/enviar-validacion", autenticar, requiereRol("operacion"), (req, res) => {
@@ -187,6 +190,86 @@ export function crearRouter(db: Database): Router {
     } catch (e) {
       res.status(e instanceof ErrorDominio ? e.status : 500).json({ error: (e as Error).message });
     }
+  });
+
+  // ---- Tesorería: pago con comprobante ----
+  r.post("/operaciones/:id/pago", autenticar, requiereRol("tesoreria"), (req, res) => {
+    const { medio, monto, fecha_pago, comprobante, notas } = req.body ?? {};
+    const errores: string[] = [];
+    if (!MEDIOS_PAGO.includes(medio)) errores.push(`medio inválido (${MEDIOS_PAGO.join(" | ")})`);
+    if (typeof monto !== "number" || !(monto > 0)) errores.push("monto debe ser mayor a 0");
+    if (typeof comprobante !== "string" || !comprobante.trim())
+      errores.push("comprobante (folio o referencia) requerido");
+    const fecha = fecha_pago ?? new Date().toISOString().slice(0, 10);
+    if (typeof fecha !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fecha))
+      errores.push("fecha_pago en formato YYYY-MM-DD");
+    if (errores.length) {
+      res.status(400).json({ error: "Datos inválidos", detalles: errores });
+      return;
+    }
+
+    const op = db.prepare("SELECT * FROM operaciones WHERE id = ?").get(Number(req.params.id)) as
+      | Operacion
+      | undefined;
+    if (!op) {
+      res.status(404).json({ error: "Operación no encontrada" });
+      return;
+    }
+    if (op.estado !== "aprobada") {
+      res.status(409).json({ error: `La operación está en '${op.estado}', se requiere 'aprobada'` });
+      return;
+    }
+    if (Math.abs(monto - op.monto) > 0.005) {
+      res.status(400).json({
+        error: `El monto del pago (${monto}) debe coincidir con el monto de la operación (${op.monto})`,
+        monto_operacion: op.monto,
+      });
+      return;
+    }
+
+    const insercion = db
+      .prepare(
+        `INSERT INTO pagos (operacion_id, medio, monto, moneda, fecha_pago, comprobante, notas, pagado_por)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        op.id,
+        medio,
+        monto,
+        op.moneda,
+        fecha,
+        comprobante.trim(),
+        typeof notas === "string" ? notas.trim() : "",
+        req.usuario!.id
+      );
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "pago",
+      `Pago por ${medio}, comprobante ${comprobante.trim()}`,
+      op.id
+    );
+    try {
+      const actualizada = cambiarEstado(db, op, "pagada", req.usuario!.id);
+      const pago = db.prepare("SELECT * FROM pagos WHERE id = ?").get(insercion.lastInsertRowid);
+      res.status(201).json({ operacion: actualizada, pago });
+    } catch (e) {
+      db.prepare("DELETE FROM pagos WHERE id = ?").run(insercion.lastInsertRowid);
+      res.status(e instanceof ErrorDominio ? e.status : 500).json({ error: (e as Error).message });
+    }
+  });
+
+  r.get("/pagos", autenticar, requiereRol("tesoreria", "direccion", "auditoria"), (_req, res) => {
+    const filas = db
+      .prepare(
+        `SELECT p.*, o.folio, u.nombre AS pagador
+         FROM pagos p
+         JOIN operaciones o ON o.id = p.operacion_id
+         JOIN usuarios u ON u.id = p.pagado_por
+         ORDER BY p.id DESC`
+      )
+      .all();
+    res.json({ pagos: filas });
   });
 
   // ---- Auditoría ----

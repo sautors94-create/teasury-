@@ -58,7 +58,8 @@ Fase 1 (Operaciones + Validación) implementada:
 - ✅ Máquina de estados: borrador → en_validación → aprobada / observada
 - ✅ Roles y permisos por endpoint (401 / 403 / 409)
 - ✅ Bitácora de auditoría visible a Auditoría y Dirección
-- ⬜ Tesorería: pagos, comprobantes y control de recursos
+- ✅ Tesorería: pago con comprobante (medio, folio, fecha) y vista de pagos con totales
+- ⬜ Tesorería: control de recursos y conciliación bancaria
 - ⬜ Dirección: reportes y aprobaciones por montos
 - ⬜ Sincronización local ↔ PostgreSQL
 
