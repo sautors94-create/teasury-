@@ -1,0 +1,41 @@
+# Genera el package-lock.json en cada cambio de dependencias y lo commitea.
+# Motivo: el lockfile tiene ~227 KB y no se transmite inline por la API; con
+# esto GitHub lo produce de forma determinista desde los package.json.
+name: Generar package-lock
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "backend/package.json"
+      - "desktop/package.json"
+      - ".github/workflows/lockfile.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generar lockfile (solo metadata, sin instalar)
+        run: npm install --package-lock-only --no-audit --no-fund
+
+      - name: Commit del lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "package-lock.json sin cambios"
+          else
+            git commit -m "chore: generar package-lock.json"
+            git push
+          fi
