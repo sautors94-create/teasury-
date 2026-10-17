@@ -24,7 +24,8 @@ El rol viaja dentro del JWT (`req.usuario.rol`) y se verifica con
 | `POST /api/operaciones/:id/cancelar` | ✅ (siempre) | ❌ | ❌ | ✅ (futuro: cualquier estado) | ❌ |
 | `POST /api/operaciones/:id/revision` (aprobar/observar) | ❌ | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/auditoria` (bitácora global) | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Ejecutar pago (`POST .../pago`) — pendiente | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Registrar pago (`POST .../pago`, con comprobante) | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `GET /api/pagos` (historial de pagos) | ❌ | ❌ | ✅ | ✅ | ✅ |
 
 Respuestas:
 
@@ -45,5 +46,5 @@ secretos gestionados.**
 - Bloqueo por intentos fallidos y expiración de sesión configurable.
 - Permiso de cancelación de Dirección sobre estados posteriores (política de
   montos).
-- Separación de duties: quien captura no valida (ya implementado); extender a
-  tesorería/validación cuando exista el pago.
+- Separación de duties: quien captura no valida (ya implementado); quien valida
+  no paga (ya implementado: sólo `tesoreria` ejecuta el pago).
