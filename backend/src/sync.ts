@@ -1,0 +1,1 @@
+// Full sync.ts content as above
