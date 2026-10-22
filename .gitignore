@@ -1,5 +1,8 @@
 node_modules/
 dist/
+release/
+.build-main/
+logs/
 *.log
 *.zip
 *.db

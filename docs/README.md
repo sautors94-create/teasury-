@@ -13,19 +13,27 @@ en estos documentos.
 | [03-roles-y-permisos.md](03-roles-y-permisos.md) | Áreas, roles y matriz de permisos |
 | [04-modelo-de-datos.md](04-modelo-de-datos.md) | Entidades, tablas y relaciones (SQLite / PostgreSQL) |
 | [05-sincronizacion.md](05-sincronizacion.md) | Diseño de sincronización local ↔ servidor (pendiente) |
+| [06-tesoreria-direccion-auditoria.md](06-tesoreria-direccion-auditoria.md) | Tesorería, Dirección y Auditoría: reglas, permisos, flujos y endpoints |
+| [07-empaquetado-electron.md](07-empaquetado-electron.md) | Empaquetado Electron: instalador multiplataforma, IPC seguro, configuración, distribución |
 
-## Estado de implementación
+## Checklist resumen (detalle completo en README.md raíz)
 
-- ✅ Backend API con operaciones y validación (`backend/`)
-- ✅ Desktop con captura, validación y auditoría (`desktop/`)
-- ✅ Tesorería: ejecución de pago con comprobante y vista de pagos
-- ✅ Dirección: aprobación por monto (umbral configurable) y reportes de control
-- ✅ Tesorería: cuentas con saldos, depósitos/retiros y conciliación de pagos
-- ✅ Sincronización: protocolo push/pull (uuid+version, conflictos, idempotencia) + schema central (`backend/central/`)
-- ⬜ Resguardos de bienes y adjuntos documentales
-- ⬜ Cliente offline con cola de sincronización
-- ⬜ Dirección: reportes y aprobaciones especiales
-- ⬜ Multiempresa y multimonedas avanzadas
+### Completado ✅
+- Backend API: operaciones, validación, tesorería, direccion, auditoría, cuentas, resguardos, adjuntos, sincronización.
+- Desktop: login, operaciones, captura, validación, pago con comprobante, direccion, reportes, cuentas, pagos, auditoría, sincronización, expediente (adjuntos + resguardos).
+- Documentación: 7 fases documentadas (docs/01..07).
+- Empaquetado Electron: electron-builder.yml, main.js, preload.js, scripts de package (win/mac/linux), iconos placeholders, documentación de distribución.
+- Tests: 32 pruebas automatizadas (flujo, pagos, recursos, cola, sincronización).
+
+### En curso / Pendiente ⬜
+- X1. Reemplazar íconos placeholder con assets reales del producto.
+- X2. Configurar firma de código y notarización para macOS.
+- X3. Probar instalación en cada plataforma objetivo.
+- X4. Configurar actualizaciones automáticas con electron-updater.
+- X5. Generar instaladores para arquitecturas adicionales.
+
+### Próximas fases de funcionalidad ⬜
+- Multiempresa/multimonedas avanzadas, conciliación bancaria, reportes Tesorería, servidor central en producción.
 
 ## Usuarios sembrados (desarrollo)
 
