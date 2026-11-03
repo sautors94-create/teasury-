@@ -17,7 +17,30 @@ IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
 regenera automáticamente con un solo comando, ver paso 3).
 
 
-── NOVEDADES DE ESTA VERSIÓN (fase 15 + 15.1) ─────────────────
+── NOVEDADES DE ESTA VERSIÓN (v3) ─────────────────────────────
+
+  · RESGUARDO TRF — REGLAS DEL NEGOCIO:
+      - El ejecutivo de Operaciones (rol "operacion") YA NO VE el
+        Resguardo de TRF: no aparece en su barra lateral y la API
+        le responde 403 si pide el detalle/movimientos.
+      - El resguardo ya NO se edita a mano: sólo se modifica al
+        REGISTRAR una operación desde él (pago especial con origen
+        TRF, comisión TRF de los flujos).
+      - El efecto se aplica AL AUTORIZARSE la operación (Validación
+        o Dirección): el retiro del pago especial y el ingreso de
+        la comisión entran entonces al resguardo. Si el retiro no
+        tiene fondo, la autorización NO procede (error 409).
+      - Si una operación ya autorizada se CANCELA, sus movimientos
+        se reversan automáticamente (ledger append-only).
+      - Ajustes manuales del resguardo: sólo el admin (correcciones).
+  · BARRA LATERAL FIJA: la marca, el menú y el bloque de usuario
+    con "Cerrar sesión" ya NO se van con el scroll. La barra ocupa
+    siempre el alto de la ventana; si el menú no cabe, sólo el menú
+    hace scroll y "Cerrar sesión" queda fijo abajo.
+  · MATRIZ TIPO EXCEL (fase 15.1) y ALTAS BANCARIAS para todos los
+    roles (igual que la versión anterior, incluidas aquí).
+
+── NOVEDADES DE LA VERSIÓN ANTERIOR (fase 15 + 15.1) ──────────
 
   · PESTAÑA "ALTAS BANCARIAS" visible para TODOS los roles (antes
     sólo la veían altas / admin_tesoreria / operacion: si entrabas
