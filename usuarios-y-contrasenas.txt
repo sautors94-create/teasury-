@@ -1,0 +1,77 @@
+==========================================================================
+ USUARIOS Y CONTRASEÑAS — SISTEMA INTEGRAL DE TESORERÍA
+==========================================================================
+
+REGLA GENERAL: la contraseña de cada usuario es IGUAL a su nombre de
+usuario (así se crean en el sistema: backend/src/db.ts, línea "Password
+por defecto igual al username").
+
+Ejemplo: usuario "admin"  ->  contraseña "admin"
+         usuario "operador3"  ->  contraseña "operador3"
+
+--------------------------------------------------------------------------
+1) USUARIOS BASE (se crean automáticamente al arrancar el sistema)
+--------------------------------------------------------------------------
+
+  Usuario            Contraseña        Nombre                              Rol
+  -----------------  ----------------  ----------------------------------  -------------------
+  admin              admin             Administrador del Sistema           admin
+  admin_ops          admin_ops         Administrador de Operaciones        admin_operaciones
+  admin_validacion   admin_validacion  Administrador de Validación         admin_validacion
+  admin_tesoreria    admin_tesoreria   Administrador de Tesorería          admin_tesoreria
+  operador           operador          Ejecutivo de Operaciones            operacion
+  validador          validador         Validador de Operaciones            validacion
+  val_tesoreria      val_tesoreria     Validador de Tesorería              validador_tesoreria
+  confirmador        confirmador       Confirmador de Depósitos            confirmador
+  tesoreria          tesoreria         Analista de Tesorería               tesoreria
+  fondeador          fondeador         Tesorero Fondeador                  fondeador
+  altas              altas             Tesorería de Altas                  altas
+  direccion          direccion         Dirección                           direccion
+  auditor            auditor           Auditoría                           auditoria
+
+--------------------------------------------------------------------------
+2) USUARIOS DE PRUEBA (se crean con el script de reinicio de datos)
+--------------------------------------------------------------------------
+
+Estos se crean al ejecutar:
+    cd backend
+    npx tsx scripts\reiniciar-datos-pruebas.ts --aplicar
+
+  Usuario            Contraseña        Nombre                              Rol
+  -----------------  ----------------  ----------------------------------  -------------------
+  operador1          operador1         Ejecutivo de Operaciones 1          operacion
+  operador2          operador2         Ejecutivo de Operaciones 2          operacion
+  operador3          operador3         Ejecutivo de Operaciones 3          operacion
+  operador4          operador4         Ejecutivo de Operaciones 4          operacion
+  operador5          operador5         Ejecutivo de Operaciones 5          operacion
+  validador1         validador1        Validador de Operaciones 1          validacion
+  validador2         validador2        Validador de Operaciones 2          validacion
+  tesorero1          tesorero1         Tesorero 1                          tesoreria
+  tesorero2          tesorero2         Tesorero 2                          tesoreria
+  tesorero3          tesorero3         Tesorero 3                          tesoreria
+  tesorero4          tesorero4         Tesorero 4                          tesoreria
+  tesorero5          tesorero5         Tesorero 5                          tesoreria
+  direccion1         direccion1        Dirección 1                         direccion
+  direccion2         direccion2        Dirección 2                         direccion
+  auditor1           auditor1          Auditor 1                           auditoria
+  auditor2           auditor2          Auditor 2                           auditoria
+
+NOTA: si aplicas el script de reinicio, SOLO quedan los 6 usuarios base
+admin, admin_ops, admin_validacion, admin_tesoreria, val_tesoreria y
+confirmador, más los 16 usuarios de prueba de arriba. Los demás (operador,
+validador, tesoreria, direccion, auditor de la semilla original) se
+eliminan.
+
+--------------------------------------------------------------------------
+3) NOTAS IMPORTANTES
+--------------------------------------------------------------------------
+
+- Si dentro de la app cambiaste la contraseña de algún usuario (módulo de
+  usuarios, con sesión de admin), esa contraseña ya NO es igual al
+  usuario: usa la que hayas capturado. Esta lista refleja las claves
+  POR DEFECTO con las que nace el sistema.
+- Estas claves son para pruebas y uso interno. Antes de usar el sistema
+  en producción, cambia las contraseñas desde el módulo de usuarios.
+- Para volver a ver esta lista en cualquier momento también puedes abrir
+  la base de datos: backend/data/tesoreria.db, tabla "usuarios" (ahí se
+  guarda la contraseña cifrada, no en texto plano).
