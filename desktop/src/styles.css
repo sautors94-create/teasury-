@@ -22,10 +22,13 @@ body {
 
 #root { min-height: 100vh; }
 
+/* La app vive en el alto de la ventana: la barra lateral queda fija y el
+   CONTENIDO es quien hace scroll (la página entera ya no se desplaza). */
 .contenedor {
   display: grid;
   grid-template-columns: 230px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
 }
 
 /* ---- Login ---- */
@@ -55,7 +58,24 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  height: 100vh;
+  overflow: hidden; /* la barra nunca se desplaza junto con la página */
 }
+/* El menú ocupa el espacio restante y SÓLO él hace scroll si no cabe;
+   la marca y el bloque de usuario quedan siempre visibles. */
+.sidebar .menu {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  padding: 0.1rem 0.15rem;
+}
+.sidebar .menu::-webkit-scrollbar { width: 6px; }
+.sidebar .menu::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 3px; }
 .sidebar .marca { font-weight: 700; font-size: 1.05rem; color: #fff; padding: 0 0.6rem 1rem; }
 .sidebar .marca small { display: block; font-weight: 400; color: #93c5fd; font-size: 0.75rem; margin-top: 0.2rem; }
 .sidebar button {
@@ -71,6 +91,7 @@ body {
 .sidebar button.activo, .sidebar button:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
 .sidebar .usuario {
   margin-top: auto;
+  flex-shrink: 0; /* fijado al pie: nunca lo saca el scroll del menú */
   padding: 0.7rem;
   border-top: 1px solid rgba(255, 255, 255, 0.18);
   font-size: 0.85rem;
@@ -83,7 +104,7 @@ body {
 }
 
 /* ---- Contenido ---- */
-.contenido { padding: 1.4rem 1.8rem; }
+.contenido { padding: 1.4rem 1.8rem; overflow-y: auto; min-height: 0; }
 .contenido h2 { margin: 0 0 1rem; font-size: 1.2rem; }
 .contenido h3 { font-size: 1rem; margin: 1.4rem 0 0.6rem; }
 

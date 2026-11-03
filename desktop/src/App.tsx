@@ -494,6 +494,9 @@ export default function App() {
           Tesorería
           <small>Sistema Integral</small>
         </div>
+        {/* El menú es la única zona que hace scroll: la marca y el bloque de
+            usuario (cerrar sesión) quedan SIEMPRE fijos en la barra lateral. */}
+        <nav className="menu">
         <button className={vista === "operaciones" ? "activo" : ""} onClick={() => setVista("operaciones")}>
           Operaciones
         </button>
@@ -577,6 +580,7 @@ export default function App() {
             Auditoría
           </button>
         )}
+        </nav>
         <div className="usuario">
           <strong>{usuario.nombre}</strong>
           Rol: {usuario.rol}
