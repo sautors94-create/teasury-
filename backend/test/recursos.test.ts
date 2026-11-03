@@ -43,6 +43,8 @@ async function operacionAprobada(monto: number): Promise<number> {
     .post(`/api/operaciones/${id}/revision`)
     .set("Authorization", `Bearer ${tokenValidador}`)
     .send({ resultado: "aprobada", comentario: "ok" });
+  // Fase 12: el Fondeador libera; Tesorería sólo paga lo liberado.
+  await request(app).post(`/api/operaciones/${id}/liberar`).set("Authorization", `Bearer ${await login("fondeador", "fondeador")}`);
   return id;
 }
 
@@ -53,8 +55,9 @@ beforeEach(() => {
 
 describe("cuentas de tesorería", () => {
   it("crea cuentas y calcula saldo con depósitos, retiros y pagos", async () => {
+    // Sólo el Administrador de Tesorería crea cuentas; el analista moviliza.
+    const cuentaId = await crearCuenta(await login("admin_tesoreria", "admin_tesoreria"), 100000);
     const token = await login("tesoreria", "tesoreria");
-    const cuentaId = await crearCuenta(token, 100000);
 
     const dep = await request(app)
       .post(`/api/cuentas/${cuentaId}/movimientos`)
@@ -96,15 +99,16 @@ describe("cuentas de tesorería", () => {
   });
 
   it("valida datos de cuenta y movimientos", async () => {
-    const token = await login("tesoreria", "tesoreria");
+    const tokenAdmin = await login("admin_tesoreria", "admin_tesoreria");
     const sinNombre = await request(app)
       .post("/api/cuentas")
-      .set("Authorization", `Bearer ${token}`)
+      .set("Authorization", `Bearer ${tokenAdmin}`)
       .send({ nombre: "  ", saldo_inicial: "mucho" });
     expect(sinNombre.status).toBe(400);
     expect(sinNombre.body.detalles.length).toBeGreaterThanOrEqual(2);
 
-    const cuentaId = await crearCuenta(token);
+    const cuentaId = await crearCuenta(tokenAdmin);
+    const token = await login("tesoreria", "tesoreria");
     const movMalo = await request(app)
       .post(`/api/cuentas/${cuentaId}/movimientos`)
       .set("Authorization", `Bearer ${token}`)
@@ -113,15 +117,20 @@ describe("cuentas de tesorería", () => {
     expect(movMalo.body.detalles.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("sólo tesorería crea cuentas y movimientos; el resto sólo consulta", async () => {
-    const cuentaId = await crearCuenta(await login("tesoreria", "tesoreria"));
-    for (const usuario of ["operador", "validador", "direccion", "auditor"]) {
+  it("sólo el administrador crea cuentas; el resto sólo consulta y moviliza", async () => {
+    const cuentaId = await crearCuenta(await login("admin_tesoreria", "admin_tesoreria"));
+    // Con la ampliación, el analista de tesorería ya no crea cuentas.
+    for (const usuario of ["operador", "validador", "direccion", "auditor", "tesoreria"]) {
       const token = await login(usuario, usuario);
       const crear = await request(app)
         .post("/api/cuentas")
         .set("Authorization", `Bearer ${token}`)
         .send({ nombre: "Fraude" });
       expect(crear.status, `usuario ${usuario} no debe crear cuentas`).toBe(403);
+    }
+    // Movimientos: el analista sí; los demás roles de negocio no.
+    for (const usuario of ["operador", "validador", "direccion", "auditor"]) {
+      const token = await login(usuario, usuario);
       const mov = await request(app)
         .post(`/api/cuentas/${cuentaId}/movimientos`)
         .set("Authorization", `Bearer ${token}`)

@@ -1,0 +1,125 @@
+FASE 15 — ALTAS EN PORTALES BANCARIOS (FORMATO "ALTA CUENTA"),
+CATÁLOGO SPEI Y BÓVEDA DE CREDENCIALES
+Sistema Integral de Tesorería
+=========================================================================
+
+Qué resuelve (el formato de alta de cuentas, dentro del sistema):
+  1. CATÁLOGO DE BANCOS PROPIO: 92 bancos SPEI guardados en la base
+     (los mismos del formato). Se acabó el BUSCARV a un archivo externo
+     de SharePoint: el banco se resuelve solo con el prefijo de la CLABE.
+  2. CLABE VALIDADA Y CUENTA DERIVADA: la CLABE se limpia a sólo dígitos,
+     debe tener 18 y de ahí salen el banco (3 primeros dígitos) y el
+     NÚMERO DE CUENTA con la regla por banco: Banorte/Banamex/HSBC/BBVA/
+     Scotiabank/Azteca = dígitos 8-17; SANTANDER = dígitos 7-17 (11).
+  3. NOMBRE CORRECTO AUTOMÁTICO: mayúsculas, sin acentos y sin Ñ en
+     todos los casos (GARCÍA ÑÁÑEZ María José → GARCIA NANEZ MARIA JOSE),
+     igual que hacía la macro Tullbox, pero sin depender de la fila ni
+     de quien capture.
+  4. CAPTURA POR LOTES PARA PORTALES: en "Altas bancarias" pegas las
+     columnas PATERNO / MATERNO / NOMBRE / CLABE, eliges en qué portales
+     (pagadoras) se registrará cada cuenta, y el sistema deja cada alta
+     en la cola. Duplicadas y errores se reportan línea por línea sin
+     bloquear al resto.
+  5. MATRIZ ALTA x PORTAL: cada alta se registra en N portales. Cuando
+     TODOS quedan dados de alta, la alta pasa a REGISTRADA sola; si uno
+     rechaza (pide motivo) la alta regresa a la cola y Tesorería NO la
+     puede dispersar hasta que quede completa.
+  6. TRABAJAR UN PORTAL: elige la pagadora y ves SUS filas pendientes
+     con nombre correcto, banco, cuenta y CLABE listas para teclear o
+     copiar ("Copiar pendientes (TSV)"). Al registrarlas en el portal
+     bancario marcas "Dada de alta" o "Rechazar" ahí mismo.
+  7. CATÁLOGO MAESTRO DE CUENTAS: las cuentas del sistema ahora traen
+     CLABE, moneda, origen (JS / JS MTY), estatus (ACTIVA / CANCELADA /
+     SUSPENDIDA con fecha de baja), cliente y formato de reporte. Una
+     cuenta nueva puede nacer con su CLABE y el banco y el número se
+     llenan solos.
+  8. IMPORTAR CUENTAS (pegar desde Excel): pegas las filas del Excel de
+     cuentas y el sistema crea o ACTUALIZA (no duplica: por CLABE o por
+     banco + número), con errores reportados por línea.
+  9. BÓVEDA DE CREDENCIALES (multi-usuario): por cuenta puedes guardar
+     N accesos (portal bancario, correo, EPLATA, SOFIPO, token) con
+     usuario, contraseña, NIP, clave de seguridad, número de token,
+     teléfono, correo y vigencia. Las contraseñas quedan CIFRADAS en la
+     base; el listado sólo muestra banderas; revelar un secreto es un
+     clic y queda AUDITADO (quién, qué campo, cuándo). Puede ver la
+     bóveda: admin de tesorería/admin siempre; un tesorero sólo si la
+     cuenta está asignada a él (o cobertura vigente).
+
+CÓMO APLICARLO
+---------------------------------------------------------------------------
+1. Copia cada archivo sobre su ruta equivalente en el repo:
+     backend/src/clabe.ts            (NUEVO)
+     backend/src/semilla-bancos.ts   (NUEVO)
+     backend/src/db.ts
+     backend/src/rutas.ts
+     backend/central/schema.sql
+     backend/test/fase15.test.ts     (NUEVO)
+     backend/test/altas-bancarias.test.ts
+     desktop/src/App.tsx
+     desktop/src/api.ts
+     desktop/src/tipos.ts
+     docs/fase15-altas-portales-boveda.md
+     scripts/smoke-fase15.mjs
+2. No hay dependencias nuevas. No hay pasos manuales de base de datos:
+   al ARRANCAR el backend, la migración de la Fase 15
+     · añade a `cuentas` las columnas clabe, moneda, origen, estatus,
+       cliente, fecha_alta, fecha_baja y formato_reporte,
+     · añade `altas_bancarias.clabe`,
+     · crea `bancos_spei` (siembra los 92 bancos), `altas_portales`,
+       `cuentas_credenciales` y `credenciales_accesos`.
+   Todo idempotente y conservando datos.
+3. Reinicia el backend y refresca la app (npm run dev en desktop).
+
+PRUEBA SUGERIDA (paso a paso)
+---------------------------------------------------------------------------
+1. Entra como "altas" (Tesorería de Altas) → pestaña "Altas bancarias".
+2. "Captura por lotes para portales (formato ALTA CUENTA)": pega unas
+   líneas de prueba CON acentos y Ñ, por ejemplo:
+       PÉREZ  GARCÍA   JUAN        072180004912345678
+       OTRO   EJEMPLO  MARÍA       014180004912345678
+   Elige 2 pagadoras (portales) → confirma: verás las creadas con el
+   nombre ya normalizado (PEREZ GARCIA JUAN), el banco por prefijo y la
+   cuenta derivada (Banorte 10 dígitos, Santander 11).
+3. En el mismo panel "Trabajar en un portal (pagadora)" elige una
+   pagadora → "Copiar pendientes (TSV)" y pégalo donde quieras; registra
+   en el portal bancario real y marca "Dada de alta". En la otra pagadora
+   marca "Rechazar" (pide motivo) → la alta regresa a la cola; cuando
+   corrijas y completes TODOS los portales, la alta queda REGISTRADA.
+4. Con Tesorería: una operación que disperse a esa cuenta se bloquea con
+   409 mientras haya portales pendientes y pasa al quedar registrada.
+5. Admin de Tesorería → Cuentas → "Bóveda" (columna nueva): crea una
+   credencial con usuario y contraseña, mira el listado (sólo banderas,
+   nunca el valor), usa "Revelar" para verla (queda en la auditoría de
+   accesos) y prueba con un tesorero SIN la cuenta asignada → 403.
+6. Admin de Tesorería → Cuentas → "Importar cuentas (pegar desde
+   Excel)": pega filas del Excel de cuentas
+   (nombre, banco, numero_cuenta, clabe, moneda, origen, estatus,
+   cliente separados por tabulador). Reenvía la misma CLABE → actualiza
+   en lugar de duplicar; una CLABE corta → error por línea.
+
+FASE 15.1 — INTERFAZ TIPO EXCEL (extra de esta versión)
+=========================================================================
+  1. LA PESTAÑA SE VE PARA TODOS: "Altas bancarias" ahora aparece en
+     el menú para todos los roles con acceso de lectura (admin,
+     dirección, auditoría, fondeador, etc. — sólo lectura salvo los
+     roles de altas). Antes sólo altas/admin_tesoreria/operacion la
+     veían y parecía que la fase no estaba aplicada.
+  2. VISTA "MATRIZ (EXCEL)" (la principal al entrar): réplica de la
+     hoja SOLICITUD ALTAS — una fila por persona con NOMBRE CORRECTO
+     / banco / Nº cuenta (derivado de la CLABE) / CLABE / moneda /
+     estado y UNA COLUMNA POR PORTAL con la marca: … pendiente,
+     ✓ dada de alta, ✗ rechazada. Encabezados congelados, números de
+     fila, buscador, filtro "sólo pendientes" y contador de progreso
+     por fila (OK k/n; ⚠ si hay rechazo).
+  3. REGISTRO CON CLIC: clic en la celda (rol altas / admin
+     tesorería / admin) abre la barra de acción: Dada de alta /
+     Rechazar… (pide motivo) / Quitar del portal. Al completar todas
+     las celdas de la fila la alta pasa sola a REGISTRADA.
+  4. COPIAR VISTA (TSV): exporta la hoja completa al portapapeles
+     para pegarla en Excel tal cual.
+  5. "DETALLE Y CAPTURA" conserva lo anterior: solicitudes manuales,
+     captura por lotes (PATERNO ▸ MATERNO ▸ NOMBRE ▸ CLABE) y
+     trabajo por portal.
+  6. ENDPOINT NUEVO: GET /api/altas-bancarias/matriz — todo el
+     tablero en una llamada (altas + portales por alta + catálogo de
+     portales), con prueba en backend/test/fase15.test.ts.

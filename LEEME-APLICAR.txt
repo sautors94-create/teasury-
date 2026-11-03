@@ -1,0 +1,110 @@
+================================================================
+FASE 12 - VISIBILIDAD POR ROL + TESORERO FONDEADOR + ALTAS BANCARIAS
+Sistema Integral de Tesoreria
+================================================================
+
+QUE TRAE ESTE PAQUETE
+---------------------
+1) VISIBILIDAD DE OPERACIONES POR ROL (listado y detalle):
+   - admin, admin_operaciones, admin_validacion, admin_tesoreria,
+     validador_tesoreria, direccion y auditoria: ven TODAS.
+   - Ejecutivo (operacion): solo SU historial POR DIA, puede mirar hasta
+     1 MES atras (la pantalla trae el selector de dia con flechas; si
+     pide mas atras la API responde 400).
+   - Validador (validacion): solo lo asignado. El Admin de Validacion
+     ahora ASIGNA EJECUTIVOS a validadores (panel nuevo en la pestana
+     Validacion); el validador ve las operaciones de esos ejecutivos.
+     Los ejecutivos sin asignar siguen en "flujo simple" (cualquier
+     validador los atiende).
+   - Tesorero Fondeador (rol NUEVO "fondeador"): ve las por validar y
+     las ya validadas para planear el efectivo (montos por frente:
+     FLUJOS, SOFOM, anticipo a rendimientos, etc.).
+   - Tesorero (analista): SOLO ve las operaciones LIBERADAS por el
+     Fondeador. Sin liberar, no las ve ni puede pagarlas.
+   - Confirmador: solo las operaciones con DEPOSITOS POR CONFIRMAR.
+   - Direccion: ve todo, no modifica nada (solo sus aprobaciones).
+   - Auditoria: ve todo y su estatus, SOLO LECTURA (se quito el
+     registro de observaciones de auditoria).
+
+2) LIBERACION DEL TESORERO FONDEADOR:
+   - Nueva pestana "Fondeo" (rol fondeador) con resumen de montos por
+     estado y por tipo de operacion, y la lista "Aprobadas por liberar".
+   - Boton "Liberar a Tesoreria". Sin liberar, Tesoreria no ve ni paga
+     la operacion (409). Queda en bitacora y se muestra en el detalle.
+
+3) CANCELACIONES:
+   - El EJECUTIVO solo cancela SU captura (borrador u observada).
+   - TESORERIA (tesoreria, admin_tesoreria, fondeador) puede cancelar
+     operaciones en proceso; en "en_pago" solo si no hay tandas.
+   - Direccion ya NO cancela (solo lectura salvo sus aprobaciones).
+
+4) ALTAS BANCARIAS (rol NUEVO "altas" = Tesoreria de Altas):
+   - El EJECUTIVO solicita el registro de la cuenta del beneficiario en
+     el banco: desde la operacion (seccion "Altas bancarias de la
+     dispersion" en el detalle, boton "Solicitar alta" por linea) o
+     manual en la pestana "Altas bancarias".
+   - La base conserva FECHA, QUIEN LO SOLICITO, MONEDA y BANCO.
+   - Tesoreria de Altas la registra (despues de darla de alta en el
+     portal bancario) o la rechaza con motivo.
+   - TESORERIA NO PUEDE PAGAR cuentas sin alta registrada: si intenta
+     dispersar, responde 409 con la lista de cuentas sin alta.
+     Las lineas sin banco/cuenta no bloquean.
+
+5) ROL Y USUARIO NUEVOS:
+   - Roles: "fondeador" (Tesorero Fondeador) y "altas" (Tesoreria de
+     Altas). Usuarios base nuevos: fondeador / altas, contrasena inicial
+     = nombre de usuario. Se crean SOLOS al arrancar el backend.
+
+ARCHIVOS (copiar tal cual sobre C:\proyectos\sistema-tesoreria)
+---------------------------------------------------------------
+backend\src\db.ts
+backend\src\rutas.ts
+backend\test\visibilidad-roles.test.ts          (NUEVO)
+backend\test\altas-bancarias.test.ts            (NUEVO)
+backend\test\roles-fase234.test.ts
+backend\test\pagos.test.ts
+backend\test\operaciones-resguardo.test.ts
+backend\test\recursos.test.ts
+backend\test\captura-flujo.test.ts
+backend\test\financiamientos-respaldo.test.ts
+backend\test\roles.test.ts
+backend\test\tesoreria-confirmaciones.test.ts
+desktop\src\tipos.ts
+desktop\src\api.ts
+desktop\src\App.tsx
+docs\visibilidad-fondeo-altas.md                (NUEVO, documentacion)
+
+COMO APLICARLO
+--------------
+1) Cierra el backend y Vite si estan corriendo (Ctrl+C).
+2) Copia las carpetas backend\, desktop\ y docs\ de este paquete sobre
+   tu carpeta C:\proyectos\sistema-tesoreria (reemplaza los archivos).
+3) NO hace falta npm install: no hay dependencias nuevas.
+4) Arranca el backend:  cd C:\proyectos\sistema-tesoreria\backend
+                        npm run dev
+   Al arrancar veras una sola vez lineas de [migracion] (roles nuevos,
+   columnas de liberacion) y se crean los usuarios fondeador y altas.
+   Es normal que no vuelvan a aparecer.
+5) Arranca la interfaz: cd C:\proyectos\sistema-tesoreria\desktop
+                        npm run dev
+6) Prueba sugerida del flujo completo:
+   a. operador captura una operacion FLUJO (con banco y cuenta en las
+      lineas) y la envia a validacion.
+   b. validador la aprueba.
+   c. Entra fondeador (fondeador/fondeador): pestana Fondeo, ve los
+      montos por frente y LIBERA la operacion.
+   d. Entra tesoreria: ahora SI la ve. Intenta registrar la tanda:
+      se bloquea mientras las cuentas no tengan alta registrada.
+   e. El operador solicita el alta (boton "Solicitar alta" en el
+      detalle); entra altas (altas/altas) y la marca Registrada.
+   f. Tesoreria registra la tanda: ya procede.
+
+PRUEBAS
+-------
+cd C:\proyectos\sistema-tesoreria
+npm test
+Esperado: 143 passed + 5 todo (0 fallos). Toma ~4-6 min en tu PC.
+
+NOTA: si tenias operaciones viejas ya aprobadas y sin liberar, el
+Fondeador puede liberarlas desde la pestana Fondeo para que Tesoreria
+pueda seguir dispersandolas.

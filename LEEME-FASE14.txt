@@ -1,0 +1,104 @@
+FASE 14 — LAYOUT AMPLIADO (DATOS OPCIONALES), PAGOS ESPECIALES,
+COMISIONES PREESTABLECIDAS POR CLIENTE Y RESGUARDO TRF DE LOS EJECUTIVOS
+=========================================================================
+
+Qué resuelve (los 4 puntos pedidos):
+  1. LAYOUT AMPLIADO: la plantilla de dispersiones ahora trae NOMBRE,
+     APELLIDO PATERNO, APELLIDO MATERNO, CONCEPTO y REFERENCIA PAGO (además
+     de todo lo anterior). Lo mismo en la captura manual.
+  2. NADA ES OBLIGATORIO: los campos nuevos son opcionales SIEMPRE — en la
+     captura manual, en el layout y en la API. Con o sin ellos, la operación
+     se captura igual.
+  3. PAGOS ESPECIALES: en "Nueva operación" hay un botón "Pago especial
+     (formato adjunto)". El ejecutivo ADJUNTA el formato (p. ej. el del SAT),
+     captura IMPORTE, PAGADORA (cuenta que dispersa) y una DESCRIPCIÓN BREVE.
+     El efectivo sale de un RESGUARDO (TRF o de un broker) que debe tener
+     DEPÓSITO suficiente; al quedar PAGADA la operación, el importe sale del
+     resguardo automáticamente para que todo cuadre. Sigue el mismo flujo de
+     siempre: validación → aprobación → liberación del Fondeador → pago.
+  4. COMISIONES PREESTABLECIDAS + TRF DE LOS EJECUTIVOS:
+     · admin_operaciones fija por cliente su COMISIÓN DE BROKER y su
+       COMISIÓN TRF (la que va directo al resguardo de la empresa). Al
+       capturar operaciones de ese cliente sin indicar comisión, se usan
+       solas las preestablecidas.
+     · El RESGUARDO DE TRF lo manejan ahora los EJECUTIVOS de Operaciones
+       (Tesorería sólo lo consulta). Puede quedar en 0. Las comisiones TRF
+       (MXN) ingresan solas al pagarse la operación.
+     · Los RETIROS del resguardo de TRF se hacen solicitando la OPERACIÓN
+       (Pago especial) a un ejecutivo — no hay retiro manual para ejecutivos.
+
+CÓMO APLICARLO
+---------------------------------------------------------------------------
+1. Copia cada archivo sobre su ruta equivalente en el repo, reemplazando el
+   contenido:
+     backend/src/db.ts, backend/src/rutas.ts, backend/central/schema.sql,
+     backend/test/fase13.test.ts (actualizado), backend/test/fase14.test.ts
+     (NUEVO), desktop/src/App.tsx, desktop/src/api.ts, desktop/src/tipos.ts,
+     desktop/src/layout.ts, docs/fase14-….md, scripts/smoke-fase14.mjs.
+2. No hay dependencias nuevas. No hay pasos manuales de base de datos:
+   al ARRANCAR el backend, la migración de la Fase 14
+     · reconstruye `operaciones` (tipo 'pago_especial' + comision_trf_pct),
+     · añade las 5 columnas opcionales a `dispersiones`,
+     · añade comision_broker_pct / comision_trf_pct a `clientes`,
+     · crea la tabla `pagos_especiales`.
+   Todo idempotente y conservando datos (probado sobre BD de la Fase 13).
+3. Reinicia el backend y refresca la app (npm run dev en desktop).
+
+PRUEBA SUGERIDA (paso a paso)
+---------------------------------------------------------------------------
+1. Admin de Operaciones → Clientes → elige un cliente → "Comisiones
+   preestablecidas del cliente": Broker 2.5 y TRF 0.5 → Guardar.
+2. Ejecutivo → Nueva operación → verás dos botones arriba:
+   "Operación completa (flujo)" y "Pago especial (formato adjunto)".
+3. En modo flujo, elige ese cliente: la comisión se rellena sola (2.5) y el
+   aviso muestra la de TRF. Envía y paga la operación → entra al Resguardo
+   TRF la comisión (0.5% del monto) automáticamente.
+4. En modo Pago especial: descripción breve, importe, pagadora, efectivo del
+   resguardo de TRF (muestra el saldo), adjunta un PDF → Revisar y enviar →
+   Confirma. Si el resguardo no tiene depósito suficiente, la captura lo
+   rechaza. Sigue el flujo hasta el pago y revisa que el resguardo TRF quedó
+   descontado en "Resguardo TRF".
+5. Descarga el layout de dispersiones: trae las columnas NOMBRE, APELLIDO
+   PATERNO, APELLIDO MATERNO, CONCEPTO y REFERENCIA PAGO. Llénalas o déjalas
+   vacías: el sistema no exige ninguna.
+
+CONTENIDO DEL PAQUETE (13 archivos)
+---------------------------------------------------------------------------
+backend/src/db.ts                     esquema + migración Fase 14 + interfaces
+backend/src/rutas.ts                  pagos especiales, comisiones, permisos TRF
+backend/central/schema.sql            espejo PostgreSQL sincronizado
+backend/test/fase14.test.ts           8 pruebas nuevas
+backend/test/fase13.test.ts           ajuste de roles TRF (Fase 14)
+desktop/src/App.tsx                   captura 2 modos, panel pago especial,
+                                      comisiones de cliente, Resguardo TRF
+desktop/src/api.ts                    comisionesCliente + formatoPagoEspecial
+desktop/src/tipos.ts                  tipos nuevos (PagoEspecialInfo, etc.)
+desktop/src/layout.ts                 plantilla con las 5 columnas nuevas
+docs/fase14-layout-pagos-especiales-comisiones-trf.md   diseño completo
+scripts/smoke-fase14.mjs              smoke E2E (40 verificaciones)
+
+VERIFICACIÓN REALIZADA (esta fase, sobre este código)
+---------------------------------------------------------------------------
+· typecheck backend + desktop: sin errores.
+· Suite completa: 173 pruebas pasando + 5 todo, CERO fallos
+  (165 previas sin regresiones + 8 nuevas).
+· Build de producción del desktop: OK.
+· Smoke E2E (scripts/smoke-fase14.mjs) sobre una BD previa a la que se le
+  QUITARON las novedades: la migración las repuso; capturas con y sin los
+  campos nuevos; comisiones preestablecidas aplicadas solas; resguardo TRF
+  registrado/consultado por el ejecutivo (Tesorería sin registro); pago
+  especial completo hasta PAGADA con descuento del resguardo; comisión TRF
+  directa al pagarse; bitácora completa. TODO OK (40/40).
+
+NOTAS Y DECISIONES
+---------------------------------------------------------------------------
+· Pagos especiales en MXN (el caso SAT/brokers); el resguardo de TRF sigue
+  aceptando movimientos manuales en otras monedas con su tipo de cambio.
+· El formato adjunto se guarda en la base (base64, máx ~9 MB), igual que los
+  comprobantes de depósitos; se descarga desde el detalle de la operación.
+· El retiro manual del resguardo TRF queda reservado al admin (correcciones);
+  el flujo normal es el pago especial, literal del requisito.
+· La columna NOMBRE del layout ahora es el nombre de pila (antes era alias
+  de BENEFICIARIO); NOMBRE CORTO sigue funcionando como antes.
+· Los saldos de los resguardos de brokers ahora los ve también el ejecutivo
+  (los necesita para elegir el origen del pago especial).

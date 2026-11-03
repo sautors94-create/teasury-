@@ -36,6 +36,11 @@ async function operacionAprobada(monto = 10000): Promise<number> {
     .set("Authorization", `Bearer ${tokenValidador}`)
     .send({ resultado: "aprobada", comentario: "_en orden" });
   expect(aprobacion.status).toBe(200);
+  // Fase 12: el Fondeador libera la operación; Tesorería sólo paga lo liberado.
+  const liberacion = await request(app)
+    .post(`/api/operaciones/${id}/liberar`)
+    .set("Authorization", `Bearer ${await login("fondeador", "fondeador")}`);
+  expect(liberacion.status).toBe(200);
   return id;
 }
 
@@ -152,7 +157,7 @@ describe("módulo Tesorería (pago con comprobante)", () => {
     expect(segundo.status).toBe(409);
   });
 
-  it("lista pagos para tesorería, dirección y auditoría; los excluye a otros roles", async () => {
+  it("lista pagos para tesorería, dirección y auditoría; validación queda fuera", async () => {
     const id = await operacionAprobada(2500);
     const token = await login("tesoreria", "tesoreria");
     await request(app)
@@ -169,10 +174,28 @@ describe("módulo Tesorería (pago con comprobante)", () => {
     expect(auditoria.body.pagos[0].folio).toMatch(/^OP-\d{4}-\d{5}$/);
     expect(auditoria.body.pagos[0].pagador).toBe("Analista de Tesorería");
 
+    const tokenValidador = await login("validador", "validador");
+    const validador = await request(app)
+      .get("/api/pagos")
+      .set("Authorization", `Bearer ${tokenValidador}`);
+    expect(validador.status).toBe(403);
+  });
+
+  it("el ejecutivo descarga comprobantes de SUS operaciones (01-ROLES.md §3.2)", async () => {
+    const id = await operacionAprobada(2500);
+    const token = await login("tesoreria", "tesoreria");
+    await request(app)
+      .post(`/api/operaciones/${id}/pago`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ medio: "transferencia", monto: 2500, comprobante: "TRF-778" });
+
+    // La operación fue capturada por 'operador': ve su comprobante.
     const tokenOperador = await login("operador", "operador");
-    const operador = await request(app)
+    const propios = await request(app)
       .get("/api/pagos")
       .set("Authorization", `Bearer ${tokenOperador}`);
-    expect(operador.status).toBe(403);
+    expect(propios.status).toBe(200);
+    expect(propios.body.pagos).toHaveLength(1);
+    expect(propios.body.pagos[0].comprobante).toBe("TRF-778");
   });
 });

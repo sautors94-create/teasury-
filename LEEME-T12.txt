@@ -1,0 +1,98 @@
+================================================================
+TAREA 12 - PAGADORAS DEL CATALOGO DE TESORERIA + LAYOUT ACTUALIZADO
+Sistema Integral de Tesoreria
+================================================================
+
+QUE TRAE ESTE PAQUETE
+---------------------
+1) PAGADORAS Y TIPO DE OPERACION DESDE EL CATALOGO DE TESORERIA:
+   - En "Nueva operacion" ya no se escriben textos: se SELECCIONAN cuentas
+     del catalogo de Tesoreria (listado agrupado por tipo: Flujo, Frente,
+     Prestamo, Anticipo a rendimientos, SOFOM, Asimilado).
+   - SELECCION MULTIPLE: una operacion puede contener asimilados, flujos,
+     rendimientos, frentes, etc.
+   - Al seleccionar puedes marcar cuales son de MANEJO MANUAL.
+   - Opcion especial "CUALQUIER FLUJO": Tesoreria determina la cuenta.
+   - Es obligatorio seleccionar al menos una pagadora.
+   - El "pagador" y el "tipo de operacion" se rellenan solos con lo
+     seleccionado (los listados y la bitacora siguen mostrandolo).
+
+2) PAGADORA POR LINEA DE DISPERSION:
+   - Cada linea (manual o por layout) puede indicar su pagadora: una cuenta
+     del catalogo o "CUALQUIER FLUJO" para que Tesoreria la determine.
+   - Es orientativa: Tesoreria sigue eligiendo la cuenta de salida real al
+     pagar; el detalle recuerda las pagadoras solicitadas.
+
+3) LAYOUT SIEMPRE ACTUALIZADO:
+   - "Descargar layout (con catalogo vigente)" genera un Excel con 2 hojas:
+     DISPERSIONES (para llenar, con columna PAGADORA) y CATALOGO PAGADORAS
+     (las cuentas activas al momento de la descarga).
+   - Si Tesoreria SACA DE OPERACION una cuenta (bloqueo o no uso
+     momentaneo), esa cuenta desaparece del catalogo y de la proxima
+     descarga del layout.
+   - Al subir el layout la columna PAGADORA es OBLIGATORIA y se valida
+     contra el catalogo vigente: una cuenta que ya no existe se rechaza
+     con error por renglon. Se acepta "CUALQUIER FLUJO" (o CUALQUIER
+     SOFOM/FRENTE/etc.).
+
+4) SACAR DE OPERACION / REACTIVAR CUENTAS (Administrador de Tesoreria):
+   - En "Cuentas de Tesoreria" el admin_tesoreria (o admin) tiene el boton
+     "Sacar de operacion" (pide motivo) y "Reactivar".
+   - Casilla "Mostrar cuentas fuera de operacion" para verlas y reactivarlas.
+   - Queda en bitacora con motivo.
+
+5) FRENTES:
+   - El tipo "Frente" ya existe en el catalogo (semilla FRENTES 01/02) y
+     con la seleccion multiple puede usarse como pagadora igual que los
+     demas tipos. El administrador puede crear mas cuentas tipo Frente.
+
+ARCHIVOS (copiar tal cual sobre C:\proyectos\sistema-tesoreria)
+---------------------------------------------------------------
+backend\src\db.ts
+backend\src\rutas.ts
+backend\central\schema.sql
+backend\test\pagadoras-destinos.test.ts         (NUEVO)
+desktop\src\tipos.ts
+desktop\src\api.ts
+desktop\src\layout.ts
+desktop\src\App.tsx
+docs\pagadoras-layout.md                        (NUEVO, documentacion)
+
+COMO APLICARLO
+--------------
+1) Cierra el backend y Vite si estan corriendo (Ctrl+C).
+2) Copia las carpetas backend\, desktop\ y docs\ de este paquete sobre tu
+   carpeta C:\proyectos\sistema-tesoreria (reemplaza los archivos).
+3) NO hace falta npm install: no hay dependencias nuevas.
+4) Arranca el backend:  cd C:\proyectos\sistema-tesoreria\backend
+                        npm run dev
+   Al arrancar veras una sola vez lineas [migracion] (columnas de la
+   pagadora en dispersiones y la tabla de destinos). Es normal que no
+   vuelvan a aparecer.
+5) Arranca la interfaz: cd C:\proyectos\sistema-tesoreria\desktop
+                        npm run dev
+
+PRUEBA SUGERIDA DEL FLUJO COMPLETO
+----------------------------------
+a. Entra como operador y captura una operacion: en "Pagadoras / tipo de
+   operacion" marca 2 o 3 cuentas del catalogo (por ejemplo FLUJOS 01,
+   ASIMILADOS 01 con Manejo manual, y CUALQUIER FLUJO).
+b. En las dispersiones, llena la PAGADORA de cada linea (o importa el
+   layout descargado; la plantilla trae la hoja CATALOGO PAGADORAS).
+c. Entra como admin_tesoreria -> Cuentas de Tesoreria -> "Sacar de
+   operacion" una cuenta (por ejemplo FLUJOS 05) con motivo. Verifica que
+   desaparecio del catalogo; si descargas de nuevo el layout, ya no esta.
+d. Intenta capturar una operacion usando esa cuenta -> el sistema la
+   rechaza. Reactivala y ya procede.
+e. Continua el flujo normal: enviar a validacion -> validador aprueba ->
+   fondeador libera -> tesoreria registra la tanda (veras el recordatorio
+   de las pagadoras solicitadas) -> pagada.
+
+PRUEBAS
+-------
+cd C:\proyectos\sistema-tesoreria
+npm test
+Esperado: 153 passed + 5 todo (0 fallos). Toma ~5-6 min en tu PC.
+
+NOTA: tus operaciones viejas no se tocan (migracion automatica); en la
+captura nueva la seleccion de pagadoras es obligatoria.

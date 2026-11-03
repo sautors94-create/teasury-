@@ -1,0 +1,129 @@
+════════════════════════════════════════════════════════════════
+  SISTEMA INTEGRAL DE TESORERÍA — GUÍA PARA DESCARGAR Y LEVANTAR
+  EN TU PC (Windows)
+════════════════════════════════════════════════════════════════
+
+Este zip contiene TODO el proyecto:
+  backend/          API Node.js + TypeScript + SQLite (puerto 4000)
+  desktop/          App de escritorio React + Vite (+ Electron)
+  docs/             Toda la documentación (visión, operaciones, fases)
+  scripts/          Smoke tests
+  .git/             Historial completo de Git (todas las fases)
+  schema.sql        Esquema de la base de datos central
+  LEEME-FASE15.txt  Instrucciones de la fase más reciente (altas portales + bóveda)
+  package-lock.json Versiones fijadas para reproducción exacta
+
+IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
+regenera automáticamente con un solo comando, ver paso 3).
+
+
+── NOVEDADES DE ESTA VERSIÓN (fase 15 + 15.1) ─────────────────
+
+  · PESTAÑA "ALTAS BANCARIAS" visible para TODOS los roles (antes
+    sólo la veían altas / admin_tesoreria / operacion: si entrabas
+    como admin parecía que "no había cambios" — era eso).
+  · VISTA "MATRIZ (EXCEL)": dentro de Altas bancarias, la vista
+    principal ahora es una hoja tipo Excel (como la hoja SOLICITUD
+    ALTAS del formato): una fila por persona, una columna por
+    portal/pagadora, marcas ✓ dada de alta / … pendiente / ✗
+    rechazada; clic en la celda para registrar (roles de altas);
+    buscador, filtros y botón "Copiar vista (TSV)" para pegarla en
+    Excel.
+  · USUARIOS DE PRUEBA (usuario = contraseña):
+      admin / admin                      (ve todo)
+      altas / altas                      (Altas: captura lotes y marca portales)
+      admin_tesoreria / admin_tesoreria  (Tesorería completa)
+      operador / operador, tesoreria / tesoreria, etc.
+  · IMPORTANTE: si YA tenías el sistema instalado de antes,
+    NO mezcles carpetas: usa esta versión completa o aplica los
+    archivos de LEEME-FASE15.txt sobre tu copia, y refresca el
+    navegador con Ctrl+F5 (caché).
+
+
+── PASO 1. Instalar Node.js (solo la primera vez) ──────────────
+
+  1. Entra a https://nodejs.org
+  2. Descarga la versión LTS (botón verde grande)
+  3. Instálala con todo "Siguiente" (deja las opciones por defecto)
+  4. Para verificar: abre PowerShell y escribe  node --version
+     Debe responder v20 o superior.
+
+
+── PASO 2. Descomprimir el proyecto ────────────────────────────
+
+  1. Haz clic derecho sobre el zip → "Extraer todo..."
+  2. Destino sugerido:  C:\tesoreria
+  3. Quedará la carpeta con backend, desktop, docs, etc. adentro.
+
+
+── PASO 3. Instalar las dependencias (solo la primera vez) ─────
+
+  1. Abre PowerShell en la carpeta del proyecto:
+     - Entra a C:\tesoreria en el Explorador
+     - Escribe "powershell" en la barra de direcciones y Enter
+  2. Ejecuta:
+        npm install
+     (una sola vez; instala backend + desktop juntos, tarda varios
+      minutos, es normal ver muchas líneas amarillas/warnings)
+
+
+── PASO 4. Arrancar el sistema ─────────────────────────────────
+
+  Desde la misma carpeta, ejecuta:
+        npm run dev
+
+  Esto abre dos procesos a la vez:
+   • api   (azul)  → la API en http://localhost:4000
+   • web   (verde) → la interfaz en http://localhost:5173
+
+  Abre en tu navegador:  http://localhost:5173
+
+  Versión escritorio (Electron, opcional):
+        npm run dev:app -w @teasury/desktop
+
+
+── PASO 5. Base de datos ───────────────────────────────────────
+
+  • Se crea sola en  backend\data\tesoreria.db  al primer arranque
+    (no necesitas hacer nada).
+  • La carpeta backend/data/ y los .db NO se suben a git ni vienen
+    en el zip: son tus datos locales.
+  • Para reiniciar la base con datos de prueba desde cero (borra
+    todo lo capturado):
+        cd backend
+        npx tsx scripts/reiniciar-datos-pruebas.ts
+  • Respaldo: basta copiar el archivo tesoreria.db a otro lugar.
+
+
+── PASO 6. Verificar que todo está bien ────────────────────────
+
+        npm test        → corre las pruebas de todas las fases
+        npm run typecheck → valida tipos TypeScript
+
+
+── GIT (para seguir trabajando entre dos PCs) ──────────────────
+
+  Este zip YA incluye la carpeta .git con todo el historial, así
+  que puedes continuar donde quedó:
+
+        git status
+        git log --oneline
+
+  Si usas tu kit de GitHub (01-PRIMERA-VEZ-PC-NUEVO.bat ya no es
+  necesario aquí porque .git viene incluido): conéctalo a tu repo
+  remoto y haz git pull / git push como siempre.
+
+
+── PROBLEMAS FRECUENTES ────────────────────────────────────────
+
+  • "npm no se reconoce..."    → Node.js no quedó en el PATH;
+    reinstálalo marcando la casilla por defecto y ABRE un
+    PowerShell nuevo.
+  • Error al compilar better-sqlite3 → falta Visual Studio Build
+    Tools; instala "Windows Build Tools": npm i -g windows-build-tools
+    o instala VS Build Tools C++ desde visualstudio.microsoft.com.
+  • Puerto 4000 ocupado → cierra otra instancia o cambia el
+    puerto:  $env:PORT=4010; npm run dev
+  • Electron no abre → primero deja corriendo "npm run dev" en una
+    ventana y usa dev:app en otra.
+════════════════════════════════════════════════════════════════
