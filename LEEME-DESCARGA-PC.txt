@@ -17,7 +17,36 @@ IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
 regenera automáticamente con un solo comando, ver paso 3).
 
 
-── NOVEDADES DE ESTA VERSIÓN (v5) ─────────────────────────────
+── NOVEDADES DE ESTA VERSIÓN (v6) ─────────────────────────────
+
+  · COMPROBANTES: AHORA SÍ SUBEN. Se admiten TODOS los formatos
+    (PDF, imágenes, XML de CFDI, hojas de cálculo, etc.) excepto
+    .DOC. Antes el selector sólo ofrecía PDF e imágenes: los
+    demás archivos aparecían en gris y no se podían elegir SIN
+    NINGÚN MENSAJE — era la causa de "no me permite y no veo
+    error". Ahora, si un archivo .DOC o mayor a 6 MB se rechaza,
+    ves el motivo con claridad. Además se corrigió el backend:
+    el límite interno de la API (100 KB) rechazaba en silencio
+    casi cualquier comprobante real.
+  · CUENTAS: SOLO EL ADMIN TESO AGREGA. El formulario "Nueva
+    cuenta" y el cargador de cuentas ya no aparecen al resto de
+    Tesorería (tesoreros, validador_tesoreria, etc.): ellos sólo
+    consultan y operan las cuentas que les corresponden.
+  · LAYOUT DE CUENTAS (4 columnas). En Cuentas, el Administrador
+    de Tesorería ahora tiene "Cargar cuentas (layout)":
+      - "Descargar layout" baja la plantilla con las columnas
+        BANCO, NOMBRE, CLAVE (la CLABE a 18 dígitos) y
+        CUENTA CORTA (número de cuenta).
+      - "Cargar layout (Excel/CSV)" sube el archivo lleno y
+        crea las cuentas; si una ya existe (misma CLABE o mismo
+        banco + cuenta corta) la ACTUALIZA en vez de duplicarla.
+        Acepta los encabezados en cualquier orden y alias
+        (CLAVE = CLABE). Consejo: escribe las columnas de
+        números como TEXTO en Excel para que no se pierdan
+        ceros a la izquierda.
+      - El pegado avanzado de 8 columnas sigue disponible abajo.
+
+── NOVEDADES DE LA VERSIÓN ANTERIOR (v5) ──────────────────────
 
   · FORMATO DE OPERACIONES CON ESTILO DEL SITIO (más formal):
     se quitaron los colores del Excel (verde/amarillo/rosa);

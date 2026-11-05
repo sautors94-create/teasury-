@@ -3976,6 +3976,95 @@ export function crearRouter(db: Database): Router {
     res.status(201).json({ creadas, actualizadas, errores });
   });
 
+  // Layout SIMPLE de cuentas (sólo Administrador de Tesorería): el archivo
+  // pide 4 columnas — BANCO, NOMBRE, CLAVE (CLABE a 18 dígitos) y CUENTA
+  // CORTA (número de cuenta). Crea la cuenta o la actualiza si ya existe
+  // (misma CLABE o mismo banco + cuenta corta); nunca duplica.
+  r.post("/cuentas/layout", autenticar, usuarioVivo, requiereRol("admin_tesoreria", "admin"), (req, res) => {
+    const crudo = req.body?.filas;
+    if (!Array.isArray(crudo) || crudo.length === 0) {
+      res.status(400).json({ error: "filas requerida: objetos { banco, nombre, clave, cuenta_corta }" });
+      return;
+    }
+    if (crudo.length > 500) {
+      res.status(400).json({ error: "máximo 500 filas por carga: divide el layout en partes" });
+      return;
+    }
+    const celda = (v: unknown): string =>
+      typeof v === "string" ? v.trim() : v === null || v === undefined ? "" : String(v).trim();
+    const creadas: string[] = [];
+    const actualizadas: string[] = [];
+    const errores: Array<{ fila: number; errores: string[] }> = [];
+    db.transaction(() => {
+      (crudo as Array<Record<string, unknown>>).forEach((raw, idx) => {
+        const f = idx + 1;
+        const banco = celda(raw?.banco);
+        const nombre = celda(raw?.nombre);
+        const clave = celda(raw?.clave);
+        const corta = celda(raw?.cuenta_corta);
+        const err: string[] = [];
+        if (!banco) err.push("banco requerido");
+        if (!nombre) err.push("nombre requerido");
+        let clabe = "";
+        if (clave) {
+          if (!/^\d{18}$/.test(clave.replace(/\s/g, ""))) {
+            err.push("CLAVE debe ser la CLABE de 18 dígitos (o vacía)");
+          } else {
+            const v = validarClabe(clave);
+            if (!v.ok) err.push(...v.errores);
+            else {
+              const bancoRow = db.prepare("SELECT nombre_corto FROM bancos_spei WHERE clave = ?").get(v.banco_clave) as
+                | { nombre_corto: string }
+                | undefined;
+              if (!bancoRow) err.push(`banco no reconocido en el catálogo SPEI (prefijo ${v.banco_clave})`);
+              else {
+                clabe = v.clabe;
+                if (banco.toUpperCase() !== bancoRow.nombre_corto.toUpperCase())
+                  err.push(`la CLABE es de ${bancoRow.nombre_corto} pero indicaste el banco ${banco}`);
+              }
+            }
+          }
+        }
+        if (!err.length && !clabe && !corta) err.push("indica la CLAVE (CLABE) o la cuenta corta");
+        if (err.length) {
+          errores.push({ fila: f, errores: err });
+          return;
+        }
+        const numeroFinal = corta || (clabe ? cuentaDesdeClabe(clabe) : "");
+        // Dedupe igual que el importador: CLABE primero; banco+número después.
+        const existente = (
+          clabe ? db.prepare("SELECT id, nombre FROM cuentas WHERE clabe = ?").get(clabe) : undefined
+        ) as { id: number; nombre: string } | undefined;
+        const porNumero =
+          existente ??
+          ((banco && numeroFinal
+            ? db
+                .prepare("SELECT id, nombre FROM cuentas WHERE UPPER(banco) = UPPER(?) AND numero_cuenta = ?")
+                .get(banco, numeroFinal)
+            : undefined) as { id: number; nombre: string } | undefined);
+        if (porNumero) {
+          db.prepare(
+            "UPDATE cuentas SET banco = ?, numero_cuenta = ?, clabe = CASE WHEN ? <> '' THEN ? ELSE clabe END WHERE id = ?"
+          ).run(banco, numeroFinal, clabe, clabe, porNumero.id);
+          actualizadas.push(porNumero.nombre);
+          return;
+        }
+        db.prepare(
+          `INSERT INTO cuentas (nombre, banco, numero_cuenta, tipo, saldo_inicial, activa, visible_operador, clabe, moneda, origen, estatus)
+           VALUES (?, ?, ?, 'flujo', 0, 1, 1, ?, 'MXN', 'layout', 'ACTIVA')`
+        ).run(nombre, banco, numeroFinal, clabe);
+        creadas.push(nombre);
+      });
+    })();
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "cuentas_layout",
+      `Layout de cuentas: ${creadas.length} creada(s), ${actualizadas.length} actualizada(s), ${errores.length} con error`
+    );
+    res.status(201).json({ creadas, actualizadas, errores });
+  });
+
   // En Tesorería SÓLO el Administrador crea cuentas (el resto consulta y
   // opera las que le fueron asignadas). El tipo determina la bolsa del dinero:
   // flujo | frente | prestamo | anticipo_rendimiento | sofom | asimilado.
@@ -5087,6 +5176,14 @@ export function crearRouter(db: Database): Router {
         const contenido = typeof a?.contenido === "string" ? a.contenido : "";
         if (!nombre) {
           res.status(400).json({ error: `comprobante ${f}: nombre requerido` });
+          return;
+        }
+        // Regla del negocio: se admite CUALQUIER formato excepto .DOC (el Word
+        // antiguo no es un comprobante fiable). El resto pasa sin restricción.
+        if (/\.doc$/i.test(nombre)) {
+          res.status(400).json({
+            error: `comprobante ${f}: '${nombre}' — formato .DOC no admitido (cualquier otro formato es válido). Conviértelo a PDF o adjúntalo en otro formato`,
+          });
           return;
         }
         const base64Limpio = contenido.includes(",") ? contenido.slice(contenido.indexOf(",") + 1) : contenido;
