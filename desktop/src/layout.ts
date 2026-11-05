@@ -36,6 +36,8 @@ export interface LineaLayout {
   apellido_materno: string;
   concepto: string;
   referencia_pago: string;
+  /** Formato de Operaciones: RFC de la persona beneficiaria (opcional). */
+  rfc: string;
   importe: number;
   /** Pagadora solicitada: nombre del catálogo o "CUALQUIER <TIPO>". */
   pagadora: string;
@@ -83,6 +85,7 @@ const ALIAS_DISPERSION: Record<string, Exclude<keyof LineaLayout, "pagadora_cuen
   "NOMBRE COMPLETO": "razon_social",
   REFERENCIA: "referencia",
   REF: "referencia",
+  RFC: "rfc",
   INE: "ine",
   NUMERO: "numero",
   NO: "numero",
@@ -289,6 +292,7 @@ export function mapearDispersiones(
       apellido_materno: "",
       concepto: "",
       referencia_pago: "",
+      rfc: "",
       importe: NaN,
       pagadora: "",
       pagadora_cuenta_id: null,
@@ -393,6 +397,7 @@ export async function descargarPlantillaDispersiones(catalogo: CuentaCatalogo[] 
     "RAZON SOCIAL",
     "CONCEPTO",
     "REFERENCIA",
+    "RFC",
     "REFERENCIA PAGO",
     "INE",
     "NUMERO",
@@ -417,6 +422,7 @@ export async function descargarPlantillaDispersiones(catalogo: CuentaCatalogo[] 
       "",
       "",
       "",
+      "",
       "6461803528523520323",
       "",
       "STP",
@@ -424,11 +430,11 @@ export async function descargarPlantillaDispersiones(catalogo: CuentaCatalogo[] 
       "57000.00",
       "PROVEEDOR",
     ],
-    ["JUAN", "PEREZ", "GARCIA", "", "", "PAGO DE HONORARIOS", "1010", "REF-88", "", "", "", "646180352590100116", "", "STP", "CUALQUIER FLUJO", "303.00", "GASTOS"],
+    ["JUAN", "PEREZ", "GARCIA", "", "", "PAGO DE HONORARIOS", "1010", "", "REF-88", "", "", "", "646180352590100116", "", "STP", "CUALQUIER FLUJO", "303.00", "GASTOS"],
   ];
   const hojaDatos = XLSX.utils.aoa_to_sheet([encabezados, ...ejemplo]);
   hojaDatos["!cols"] = [
-    { wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 34 }, { wch: 22 }, { wch: 12 }, { wch: 16 },
+    { wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 34 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 16 },
     { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 22 }, { wch: 20 }, { wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 14 },
   ];
   const hojaCatalogo = XLSX.utils.aoa_to_sheet([

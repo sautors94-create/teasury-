@@ -148,6 +148,8 @@ export interface Dispersion {
   apellido_materno: string;
   concepto: string;
   referencia_pago: string;
+  /** Formato de Operaciones: RFC de la persona beneficiaria (opcional). */
+  rfc: string;
   importe: number;
   pagadora: string;
   pagadora_cuenta_id: number | null;
@@ -550,6 +552,7 @@ CREATE TABLE IF NOT EXISTS dispersiones (
   apellido_materno   TEXT NOT NULL DEFAULT '',
   concepto           TEXT NOT NULL DEFAULT '',
   referencia_pago    TEXT NOT NULL DEFAULT '',
+  rfc                TEXT NOT NULL DEFAULT '',
   importe      REAL NOT NULL CHECK (importe > 0),
   pagadora     TEXT NOT NULL DEFAULT '',
   pagadora_cuenta_id INTEGER REFERENCES cuentas(id)
@@ -1072,6 +1075,7 @@ export function abrirBase(ruta: string = RUTA_DB): Database.Database {
   db.exec(ESQUEMA);
   migrarEsquema(db);
   migrarPagos(db);
+  migrarDispersionesRfc(db);
   migrarUsuarios(db);
   migrarOperacionesCliente(db);
   migrarCapturaFlujo(db);
@@ -1139,6 +1143,18 @@ function migrarPagos(db: Database.Database): void {
   if (columnas.length > 0 && !columnas.includes("cuenta_id")) {
     db.exec("ALTER TABLE pagos ADD COLUMN cuenta_id INTEGER REFERENCES cuentas(id)");
     console.log("[migración] pagos.cuenta_id añadida");
+  }
+}
+
+/**
+ * Formato de Operaciones — añade `dispersiones.rfc` a bases existentes (la
+ * columna ya nace en el ESQUEMA para bases nuevas). Idempotente.
+ */
+function migrarDispersionesRfc(db: Database.Database): void {
+  const columnas = (db.pragma("table_info(dispersiones)") as Array<{ name: string }>).map((c) => c.name);
+  if (columnas.length > 0 && !columnas.includes("rfc")) {
+    db.exec("ALTER TABLE dispersiones ADD COLUMN rfc TEXT NOT NULL DEFAULT ''");
+    console.log("[Migración] dispersiones.rfc añadida (Formato de Operaciones)");
   }
 }
 
