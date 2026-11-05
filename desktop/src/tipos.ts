@@ -224,6 +224,8 @@ export interface Dispersion {
   apellido_materno?: string;
   concepto?: string;
   referencia_pago?: string;
+  /** Formato de Operaciones: RFC de la persona beneficiaria (opcional). */
+  rfc?: string;
   importe: number;
   /** Pagadora solicitada (Tarea 12): nombre del catálogo o "CUALQUIER <TIPO>". */
   pagadora?: string;

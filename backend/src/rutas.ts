@@ -115,6 +115,8 @@ interface LineaDispersion {
   apellido_materno: string;
   concepto: string;
   referencia_pago: string;
+  /** Formato de Operaciones: RFC de la persona beneficiaria (opcional). */
+  rfc: string;
   importe: number;
   pagadora: string;
   pagadora_cuenta_id: number | null;
@@ -146,6 +148,7 @@ const CAMPOS_TEXTO_DISPERSION: Array<[keyof Omit<LineaDispersion, "beneficiario"
   ["apellido_materno", "apellido materno"],
   ["concepto", "concepto"],
   ["referencia_pago", "referencia de pago"],
+  ["rfc", "RFC"],
 ];
 
 /**
@@ -180,6 +183,7 @@ function validarDispersiones(
       apellido_materno: "",
       concepto: "",
       referencia_pago: "",
+      rfc: "",
       importe: 0,
       pagadora: "",
       pagadora_cuenta_id: null,
@@ -1288,11 +1292,11 @@ export function crearRouter(db: Database): Router {
       const nuevoId = Number(resultado.lastInsertRowid);
       if (esFlujo) {
         const insDisp = db.prepare(
-          `INSERT INTO dispersiones (operacion_id, orden, beneficiario, razon_social, referencia, ine, numero, tarjeta, cuenta, clabe, banco, etiqueta, nombre, apellido_paterno, apellido_materno, concepto, referencia_pago, importe, pagadora, pagadora_cuenta_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO dispersiones (operacion_id, orden, beneficiario, razon_social, referencia, ine, numero, tarjeta, cuenta, clabe, banco, etiqueta, nombre, apellido_paterno, apellido_materno, concepto, referencia_pago, rfc, importe, pagadora, pagadora_cuenta_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         lineas.forEach((l, i) =>
-          insDisp.run(nuevoId, i + 1, l.beneficiario, l.razon_social, l.referencia, l.ine, l.numero, l.tarjeta, l.cuenta, l.clabe, l.banco, l.etiqueta, l.nombre, l.apellido_paterno, l.apellido_materno, l.concepto, l.referencia_pago, l.importe, l.pagadora, l.pagadora_cuenta_id)
+          insDisp.run(nuevoId, i + 1, l.beneficiario, l.razon_social, l.referencia, l.ine, l.numero, l.tarjeta, l.cuenta, l.clabe, l.banco, l.etiqueta, l.nombre, l.apellido_paterno, l.apellido_materno, l.concepto, l.referencia_pago, l.rfc, l.importe, l.pagadora, l.pagadora_cuenta_id)
         );
         const insBroker = db.prepare(
           "INSERT INTO operaciones_brokers (operacion_id, broker_id, nombre, porcentaje, monto) VALUES (?, ?, ?, ?, ?)"
@@ -1715,11 +1719,11 @@ export function crearRouter(db: Database): Router {
     db.transaction(() => {
       db.prepare("DELETE FROM dispersiones WHERE operacion_id = ?").run(op.id);
       const ins = db.prepare(
-        `INSERT INTO dispersiones (operacion_id, orden, beneficiario, razon_social, referencia, ine, numero, tarjeta, cuenta, clabe, banco, etiqueta, nombre, apellido_paterno, apellido_materno, concepto, referencia_pago, importe, pagadora, pagadora_cuenta_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO dispersiones (operacion_id, orden, beneficiario, razon_social, referencia, ine, numero, tarjeta, cuenta, clabe, banco, etiqueta, nombre, apellido_paterno, apellido_materno, concepto, referencia_pago, rfc, importe, pagadora, pagadora_cuenta_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       vp.datos.forEach((l, i) =>
-        ins.run(op.id, i + 1, l.beneficiario, l.razon_social, l.referencia, l.ine, l.numero, l.tarjeta, l.cuenta, l.clabe, l.banco, l.etiqueta, l.nombre, l.apellido_paterno, l.apellido_materno, l.concepto, l.referencia_pago, l.importe, l.pagadora, l.pagadora_cuenta_id)
+        ins.run(op.id, i + 1, l.beneficiario, l.razon_social, l.referencia, l.ine, l.numero, l.tarjeta, l.cuenta, l.clabe, l.banco, l.etiqueta, l.nombre, l.apellido_paterno, l.apellido_materno, l.concepto, l.referencia_pago, l.rfc, l.importe, l.pagadora, l.pagadora_cuenta_id)
       );
     })();
     const filas = db

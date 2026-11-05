@@ -17,6 +17,41 @@ IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
 regenera automáticamente con un solo comando, ver paso 3).
 
 
+── NOVEDADES DE ESTA VERSIÓN (v4) ─────────────────────────────
+
+  · NUEVA CAPTURA "NUEVA OPERACIÓN" = FORMATO DE OPERACIONES
+    (idéntico al Excel del negocio; se quitó el formulario anterior):
+      - Barra verde FORMATO DE OPERACIONES con el Folio Ops (se
+        asigna al guardar).
+      - Sección A: Fecha de la operación, Fecha del depósito,
+        Empresa frente (RESGUARDO o frentes del catálogo), Banco
+        del depósito y Monto Pagado.
+      - Sección B: Cliente, Razón Social, RFC, Ejecutivo (tú) y
+        Broker 1..4 con su % (montos calculados).
+      - Sección C: Pagadora (catálogo o CUALQUIER FLUJO), Tipo de
+        Operación FLUJOS, Timbrar y Comisión % (aviso rojo
+        "COMISIÓN COBRADA EN RESGUARDO" cuando aplica).
+      - Sección D: Monto Pagado, IVA, Neto, Comisiones (op y por
+        broker), Resguardo, Devolución y Flujo Total — todos
+        calculados en vivo.
+      - DISPERSIÓN: tabla con los encabezados del formato
+        (CONCEPTO, TIPO DE OPERACIÓN, PATERNO, MATERNO, NOMBRE,
+        NOMBRE completo —se rellena solo al teclear paterno/
+        materno/nombre—, REFERENCIA, RFC, INE, #, Tarjeta,
+        CUENTA CLABE, Banco, CLABE, Importe). Se agregan filas
+        con "+ Agregar fila" o importando el layout (Excel/CSV).
+      - Barra azul de COMPROBACIÓN: Total, VERDADERO/FALSO y
+        DIFERENCIA A FAVOR / (EN CONTRA), con la entidad de
+        comprobación editable (MGN INTRUST por omisión).
+      - Observaciones o Instrucciones Especiales.
+      - La comprobación debe dar VERDADERO para guardar: el Flujo
+        Total no puede exceder el Monto Pagado (regla del negocio).
+  · NUEVO CAMPO RFC en las dispersiones (columna del formato): se
+    guarda en la base (migración automática) y viaja con la
+    operación; también se acepta por layout (encabezado RFC).
+  · El botón "Pago especial (formato adjunto)" (fase 14) queda en
+    la esquina de la barra verde.
+
 ── NOVEDADES DE ESTA VERSIÓN (v3) ─────────────────────────────
 
   · RESGUARDO TRF — REGLAS DEL NEGOCIO:
