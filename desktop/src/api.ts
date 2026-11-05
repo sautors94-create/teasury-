@@ -612,6 +612,12 @@ export const api = {
       "/cuentas/importar-lote",
       { method: "POST", body: JSON.stringify({ lineas }) }
     ),
+  /** Layout simple de cuentas: BANCO, NOMBRE, CLAVE (CLABE) y CUENTA CORTA. */
+  cargarLayoutCuentas: (filas: Array<{ banco: string; nombre: string; clave: string; cuenta_corta: string }>) =>
+    solicitar<{ creadas: string[]; actualizadas: string[]; errores: Array<{ fila: number; errores: string[] }> }>(
+      "/cuentas/layout",
+      { method: "POST", body: JSON.stringify({ filas }) }
+    ),
   credenciales: (cuentaId: number) =>
     solicitar<{ cuenta: string; credenciales: CredencialBoveda[] }>(`/cuentas/${cuentaId}/credenciales`),
   crearCredencial: (

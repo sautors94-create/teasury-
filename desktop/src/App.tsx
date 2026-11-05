@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, descargarConcentrado, getToken, setToken } from "./api";import FormatoOperaciones from "./FormatoOperaciones";
 import {
+  descargarPlantillaCuentas,
   descargarPlantillaDispersiones,
   descargarPlantillaTandas,
   leerFilas,
+  mapearCuentasLayout,
   mapearDispersiones,
   mapearTandas,
   type LineaLayout,
@@ -1887,11 +1889,25 @@ function VistaCapturaEspecial({
               </select>
             </div>
             <div>
-              <label>Formato del pago (PDF / imagen) *</label>
+              <label>Formato del pago (cualquier formato; sólo se excluye .DOC) *</label>
               <input
                 type="file"
-                accept=".pdf,image/*"
-                onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
+                onChange={(e) => {
+                  const a = e.target.files?.[0] ?? null;
+                  if (a && /\.doc$/i.test(a.name)) {
+                    onError(
+                      `'${a.name}': formato .DOC no admitido (cualquier otro formato es válido). Conviértelo a PDF o adjúntalo en otro formato.`
+                    );
+                    e.target.value = "";
+                    return;
+                  }
+                  if (a && a.size > 6 * 1024 * 1024) {
+                    onError(`'${a.name}': excede el máximo de 6 MB por archivo.`);
+                    e.target.value = "";
+                    return;
+                  }
+                  setArchivo(a);
+                }}
                 required
               />
             </div>
@@ -2747,6 +2763,9 @@ function VistaCuentas() {
   // Tarea 12: el administrador puede ver también las cuentas fuera de
   // operación y reactivarlas.
   const [esAdmin, setEsAdmin] = useState(false);
+  // Regla del negocio: SÓLO el Administrador de Tesorería agrega cuentas
+  // (manual o por layout); el resto consulta y opera las suyas.
+  const [esAdminTeso, setEsAdminTeso] = useState(false);
   const [verTodas, setVerTodas] = useState(false);
   const [alta, setAlta] = useState({
     nombre: "",
@@ -2780,10 +2799,12 @@ function VistaCuentas() {
       .then(({ usuario }) => {
         setEsTesoreria(usuario.rol === "tesoreria" || usuario.rol === "admin_tesoreria");
         setEsAdmin(usuario.rol === "admin_tesoreria" || usuario.rol === "admin");
+        setEsAdminTeso(usuario.rol === "admin_tesoreria");
       })
       .catch(() => {
         setEsTesoreria(false);
         setEsAdmin(false);
+        setEsAdminTeso(false);
       });
   }, [verTodas]);
 
@@ -2896,7 +2917,7 @@ function VistaCuentas() {
           onCerrar={() => setCatalogoDe(null)}
         />
       )}
-      {verImportar && esAdmin && (
+      {verImportar && esAdminTeso && (
         <PanelImportarCuentas
           onError={setError}
           onOk={(m) => {
@@ -2906,10 +2927,10 @@ function VistaCuentas() {
           onCerrar={() => setVerImportar(false)}
         />
       )}
-      {esAdmin && (
+      {esAdminTeso && (
         <div className="barra">
           <button className="btn" onClick={() => setVerImportar((v) => !v)}>
-            {verImportar ? "Cerrar importador" : "Importar cuentas (pegar desde Excel)"}
+            {verImportar ? "Cerrar cargador de cuentas" : "Cargar cuentas (layout)"}
           </button>
         </div>
       )}
@@ -2935,6 +2956,7 @@ function VistaCuentas() {
       />
 
       <div className="rejilla">
+        {esAdminTeso && (
         <form
           className="panel"
           onSubmit={async (e) => {
@@ -3019,6 +3041,7 @@ function VistaCuentas() {
           />
           <button className="btn">Crear cuenta</button>
         </form>
+        )}
 
         <form
           className="panel"
@@ -3553,6 +3576,7 @@ function PanelImportarCuentas({
   onCerrar: () => void;
 }) {
   const [texto, setTexto] = useState("");
+  const [cargandoLayout, setCargandoLayout] = useState(false);
   const [resumen, setResumen] = useState<{
     creadas: string[];
     actualizadas: string[];
@@ -3574,14 +3598,62 @@ function PanelImportarCuentas({
     }
   };
 
+  /** Layout simple (4 columnas): BANCO, NOMBRE, CLAVE y CUENTA CORTA. */
+  const cargarLayout = async (archivo: File | undefined) => {
+    if (!archivo) return;
+    onError("");
+    setCargandoLayout(true);
+    try {
+      const filas = mapearCuentasLayout(await leerFilas(archivo)).filter(
+        (f) => f.banco || f.nombre || f.clave || f.cuenta_corta
+      );
+      if (!filas.length) {
+        onError("El archivo no trae filas legibles: descarga el layout y llénalo con BANCO, NOMBRE, CLAVE y CUENTA CORTA.");
+        return;
+      }
+      const r = await api.cargarLayoutCuentas(filas);
+      setResumen({
+        creadas: r.creadas,
+        actualizadas: r.actualizadas,
+        errores: r.errores.map((x) => ({ linea: x.fila, errores: x.errores })),
+      });
+      onOk(`Layout de cuentas: ${r.creadas.length} creada(s), ${r.actualizadas.length} actualizada(s), ${r.errores.length} con error.`);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setCargandoLayout(false);
+    }
+  };
+
   return (
     <div className="panel" style={{ marginBottom: "1rem" }}>
-      <h3 style={{ marginTop: 0 }}>Importar cuentas (pegar desde Excel)</h3>
+      <h3 style={{ marginTop: 0 }}>Cargar cuentas (layout)</h3>
       <p style={{ color: "var(--tenue)", fontSize: "0.85rem" }}>
-        Pega las filas con 8 columnas separadas por tabulador:{" "}
-        <strong>nombre ▸ banco ▸ numero_cuenta ▸ clabe ▸ moneda ▸ origen ▸ estatus ▸ cliente</strong>. Si la cuenta ya
-        existe (misma CLABE o mismo banco+número) se actualiza con los datos que traigan valor; no se duplica. Las
-        credenciales se capturan después a mano en la bóveda de cada cuenta.
+        El layout sólo pide 4 columnas: <strong>BANCO ▸ NOMBRE ▸ CLAVE ▸ CUENTA CORTA</strong> (la CLAVE es la CLABE a
+        18 dígitos; escribe las columnas de números como TEXTO para que Excel no les quite ceros). Si la cuenta ya
+        existe (misma CLABE o mismo banco + cuenta corta) se actualiza; no se duplica.
+      </p>
+      <div className="barra" style={{ alignItems: "center", flexWrap: "wrap" }}>
+        <button className="btn" onClick={descargarPlantillaCuentas}>
+          Descargar layout
+        </button>
+        <label className="btn" style={{ marginBottom: 0 }}>
+          {cargandoLayout ? "Cargando…" : "Cargar layout (Excel/CSV)"}
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv,.txt"
+            style={{ display: "none" }}
+            onChange={async (e) => {
+              const archivo = e.target.files?.[0];
+              e.target.value = "";
+              await cargarLayout(archivo);
+            }}
+            disabled={cargandoLayout}
+          />
+        </label>
+      </div>
+      <p style={{ color: "var(--tenue)", fontSize: "0.8rem", margin: "0.4rem 0 0.8rem" }}>
+        ¿Prefieres pegarlas? Abajo puedes pegar el formato avanzado de 8 columnas.
       </p>
       <textarea
         rows={6}
@@ -3591,7 +3663,7 @@ function PanelImportarCuentas({
         style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem" }}
       />
       <button className="btn" style={{ marginTop: "0.4rem" }} onClick={() => void importar()}>
-        Importar
+        Importar (pegado avanzado)
       </button>
       {resumen && (
         <div style={{ marginTop: "0.6rem" }}>
@@ -3603,7 +3675,7 @@ function PanelImportarCuentas({
             <div className="error">
               {resumen.errores.map((e) => (
                 <div key={e.linea}>
-                  Línea {e.linea}: {e.errores.join("; ")}
+                  Fila {e.linea}: {e.errores.join("; ")}
                 </div>
               ))}
             </div>
@@ -3611,7 +3683,7 @@ function PanelImportarCuentas({
         </div>
       )}
       <button className="btn" style={{ marginTop: "0.5rem" }} onClick={onCerrar}>
-        Cerrar importador
+        Cerrar
       </button>
     </div>
   );
@@ -7507,22 +7579,39 @@ function CeldaComprobantes({
         </div>
       ))}
       {puedeAdjuntar && pendiente && lista.length < 10 && (
-        <label className="btn" style={{ padding: "0.1rem 0.5rem", fontSize: "0.78rem", marginTop: "0.2rem" }}>
+        <label className="btn" style={{ padding: "0.1rem 0.5rem", fontSize: "0.78rem", marginTop: "0.2rem" }} title="Cualquier formato es admitido (sólo se excluye .DOC); máximo 6 MB por archivo">
           + Adjuntar
           <input
             type="file"
             multiple
-            accept="image/*,application/pdf"
             style={{ display: "none" }}
             onChange={async (e) => {
-              const archivos = Array.from(e.target.files ?? []);
+              const todos = Array.from(e.target.files ?? []);
               e.target.value = "";
-              if (!archivos.length) return;
+              if (!todos.length) return;
               setError("");
+              // Regla del negocio: se admite CUALQUIER formato excepto .DOC.
+              // Máximo ~6 MB por archivo (límite del backend en base64).
+              const rechazados: string[] = [];
+              const validos = todos.filter((a) => {
+                if (/\.doc$/i.test(a.name)) {
+                  rechazados.push(`${a.name} (.DOC no admitido — conviértelo a PDF u otro formato)`);
+                  return false;
+                }
+                if (a.size > 6 * 1024 * 1024) {
+                  rechazados.push(`${a.name} (excede 6 MB)`);
+                  return false;
+                }
+                return true;
+              });
+              if (!validos.length) {
+                setError(`No se adjuntó ningún archivo: ${rechazados.join(" · ")}`);
+                return;
+              }
               setCargando(true);
               try {
                 const contenido = await Promise.all(
-                  archivos.map(
+                  validos.map(
                     (a) =>
                       new Promise<{ nombre: string; mime: string; contenido: string }>((resolver, rechazar) => {
                         const lector = new FileReader();
@@ -7534,9 +7623,14 @@ function CeldaComprobantes({
                   )
                 );
                 await api.subirComprobantes(deposito.id, contenido);
-                recargar();
+                await recargar();
+                if (rechazados.length)
+                  setError(`Se subieron ${validos.length} archivo(s), pero se omitieron: ${rechazados.join(" · ")}`);
               } catch (err) {
-                setError((err as Error).message);
+                setError(
+                  (err as Error).message +
+                    (rechazados.length ? ` (además se omitieron: ${rechazados.join(" · ")})` : "")
+                );
               } finally {
                 setCargando(false);
               }

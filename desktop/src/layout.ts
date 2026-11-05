@@ -484,3 +484,69 @@ export function descargarPlantillaTandas(): void {
   document.body.removeChild(enlace);
   URL.revokeObjectURL(url);
 }
+
+/* ------------------- Layout de cuentas (4 columnas) ---------------------- */
+
+/** Fila del layout simple de cuentas: BANCO, NOMBRE, CLAVE y CUENTA CORTA. */
+export interface FilaLayoutCuentas {
+  banco: string;
+  nombre: string;
+  clave: string;
+  cuenta_corta: string;
+}
+
+/** Alias aceptados por columna (las claves van normalizadas). */
+const ALIAS_CUENTAS: Record<string, keyof FilaLayoutCuentas> = {
+  BANCO: "banco",
+  "BANCO EMISOR": "banco",
+  INSTITUCION: "banco",
+  NOMBRE: "nombre",
+  "NOMBRE DE CUENTA": "nombre",
+  "NOMBRE CUENTA": "nombre",
+  ALIAS: "nombre",
+  CLAVE: "clave",
+  CLABE: "clave",
+  "CLAVE INTERBANCARIA": "clave",
+  "CLAVE INTERBANCARIA ESTANDARIZADA": "clave",
+  "CUENTA CORTA": "cuenta_corta",
+  CUENTA_CORTA: "cuenta_corta",
+  "NO CUENTA": "cuenta_corta",
+  "NO. CUENTA": "cuenta_corta",
+  "NO DE CUENTA": "cuenta_corta",
+  "NUMERO CUENTA": "cuenta_corta",
+  "NUMERO DE CUENTA": "cuenta_corta",
+  CUENTA: "cuenta_corta",
+};
+
+/**
+ * Mapea filas del archivo (Excel o CSV) al layout de cuentas. Acepta los
+ * encabezados en cualquier orden y con alias (CLAVE ≡ CLABE, CUENTA ≡
+ * CUENTA CORTA…); ignora columnas desconocidas.
+ */
+export function mapearCuentasLayout(filas: Array<Record<string, unknown>>): FilaLayoutCuentas[] {
+  return filas.map((fila) => {
+    const limpia: FilaLayoutCuentas = { banco: "", nombre: "", clave: "", cuenta_corta: "" };
+    for (const [crudo, valor] of Object.entries(fila)) {
+      const campo = ALIAS_CUENTAS[normalizar(crudo)];
+      if (!campo) continue;
+      const texto = String(valor ?? "").trim();
+      if (texto && !limpia[campo]) limpia[campo] = texto;
+    }
+    return limpia;
+  });
+}
+
+/** Descarga la plantilla del layout de cuentas (sólo los 4 encabezados). */
+export function descargarPlantillaCuentas(): void {
+  const filas = [["BANCO", "NOMBRE", "CLAVE", "CUENTA CORTA"]];
+  const csv = filas.map((f) => f.join(",")).join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const enlace = document.createElement("a");
+  enlace.href = url;
+  enlace.download = "layout-cuentas.csv";
+  document.body.appendChild(enlace);
+  enlace.click();
+  document.body.removeChild(enlace);
+  URL.revokeObjectURL(url);
+}
