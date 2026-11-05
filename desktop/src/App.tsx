@@ -49,6 +49,7 @@ import type {
   FilaRespaldoOperacion,
   MovimientoConcentrado,
   Parametro,
+  Pronostico,
   ResguardoBroker,
   ResguardoDetalle,
   ResumenFondeador,
@@ -514,7 +515,7 @@ export default function App() {
         )}
         {(usuario.rol === "validacion" || usuario.rol === "admin_validacion") && (
           <button className={vista === "validacion" ? "activo" : ""} onClick={() => setVista("validacion")}>
-            Validación
+            Calidad
           </button>
         )}
         {usuario.rol === "fondeador" && (
@@ -1095,9 +1096,9 @@ function VistaOperaciones({
               {usuario.rol === "operacion" && (op.estado === "borrador" || op.estado === "observada") && (
                 <button
                   className="btn"
-                  onClick={() => void accion(api.enviarValidacion(op.id), "Enviada a validación.")}
+                  onClick={() => void accion(api.enviarValidacion(op.id), "Enviada a Calidad.")}
                 >
-                  Enviar a validación
+                  Enviar a Calidad
                 </button>
               )}
               {usuario.rol === "fondeador" && op.estado === "aprobada" && !op.liberada_en && (
@@ -1127,7 +1128,7 @@ function VistaOperaciones({
               {(op.estado === "borrador" || op.estado === "observada" || op.estado === "cancelada") &&
                 usuario.rol === "operacion" && (
                   <span style={{ color: "var(--tenue)", fontSize: "0.85rem" }}>
-                    Aún no requiere pago: continúa en el flujo de Operaciones / Validación.
+                    Aún no requiere pago: continúa en el flujo de Operaciones / Calidad.
                   </span>
                 )}
             </div>
@@ -1309,7 +1310,7 @@ function VistaOperaciones({
 
             {usuario.rol === "validacion" && op.estado === "en_validacion" && (
               <>
-                <h3>Revisión de Validación</h3>
+                <h3>Revisión de Calidad</h3>
                 <label>Comentario (obligatorio)</label>
                 <textarea rows={3} value={comentario} onChange={(e) => setComentario(e.target.value)} />
                 <div className="barra">
@@ -2716,7 +2717,7 @@ function VistaDireccion() {
                   <span className={`badge ${f.estado}`}>{
                     {
                       borrador: "Borrador",
-                      en_validacion: "En validación",
+                      en_validacion: "En calidad",
                       observada: "Observada",
                       pendiente_direccion: "Pend. Dirección",
                       aprobada: "Aprobada",
@@ -3806,6 +3807,86 @@ function CuentasSoloLectura({
   );
 }
 
+/**
+ * BARRA DE PRONÓSTICO para Tesorería: las operaciones capturadas por
+ * Operaciones que siguen en proceso (borrador → en pago), agrupadas por las
+ * categorías del negocio — FLUJOS, ASIMILADOS, FRENTES, PAGOS ESPECIALES y
+ * OTROS. Barra segmentada proporcional al monto, leyenda con número de
+ * operaciones y desglose por estado. Estilo formal del sitio.
+ */
+const PRON_COLORES: Record<string, string> = {
+  FLUJOS: "var(--acento-oscuro)",
+  ASIMILADOS: "var(--acento)",
+  FRENTES: "#4a7bab",
+  "PAGOS ESPECIALES": "#7f9ec2",
+  OTROS: "#94a3b8",
+};
+
+function BarraPronostico() {
+  const [pron, setPron] = useState<Pronostico | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api
+      .pronostico()
+      .then(setPron)
+      .catch((e: Error) => setError(e.message));
+  }, []);
+  // Informativa: si falla o aún no hay capturas, no estorba la vista.
+  if (error || !pron) return null;
+  const formato = (n: number) => n.toLocaleString("es-MX", { minimumFractionDigits: 2 });
+  const conDatos = pron.categorias.filter((c) => c.operaciones > 0);
+  const divisor = pron.total.monto > 0 ? pron.total.monto : 1;
+  return (
+    <div className="panel pron-panel">
+      <div className="pron-cabecera">
+        <h3>Pronóstico de operaciones capturadas</h3>
+        <span className="pron-total">
+          <b>{pron.total.operaciones}</b> en proceso · <b>${formato(pron.total.monto)}</b> MXN
+          {pron.total.flujo_total > 0 && (
+            <>
+              {" · "}flujo a dispersar <b>${formato(pron.total.flujo_total)}</b>
+            </>
+          )}
+        </span>
+      </div>
+      <div className="pron-barra" role="img" aria-label="Pronóstico por categoría del negocio">
+        {conDatos.map((c) => (
+          <div
+            key={c.categoria}
+            className="pron-segmento"
+            style={{
+              width: `${(c.monto / divisor) * 100}%`,
+              background: PRON_COLORES[c.categoria] ?? "#94a3b8",
+            }}
+            data-etiqueta={`${c.categoria}: $${formato(c.monto)} MXN (${c.operaciones} op.)`}
+          />
+        ))}
+      </div>
+      <div className="pron-leyenda">
+        {pron.categorias.map((c) => (
+          <div key={c.categoria} className="pron-item" style={{ opacity: c.operaciones === 0 ? 0.45 : 1 }}>
+            <span
+              className="pron-muestra"
+              style={{ background: PRON_COLORES[c.categoria] ?? "#94a3b8" }}
+            />
+            <span className="pron-cat">{c.categoria}</span>
+            <span className="pron-dato">
+              <b>{c.operaciones}</b> op. · <b>${formato(c.monto)}</b>
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="pron-estados">
+        {pron.por_estado.map((e) => (
+          <span key={e.estado} className="pron-estado">
+            {ETIQUETAS_ESTADO[e.estado as Estado] ?? e.estado}: <b>{e.operaciones}</b> · ${formato(e.monto)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function VistaPagos() {
   const [pagos, setPagos] = useState<Pago[]>([]);
   const [error, setError] = useState("");
@@ -3835,6 +3916,8 @@ function VistaPagos() {
     <>
       <h2>Pagos ejecutados</h2>
       {error && <div className="error">{error}</div>}
+      {/* Pronóstico de lo capturado por Operaciones (flujos, asimilados, frentes…). */}
+      <BarraPronostico />
       <div className="barra">
         <input
           placeholder="Filtrar por folio, comprobante, pagador, notas o moneda…"
@@ -4958,7 +5041,7 @@ function VistaFondeo() {
   }, []);
 
   const ETIQUETAS_FONDEO: Array<[string, number]> = [
-    ["En validación", 0],
+    ["En calidad", 0],
     ["Observada", 1],
     ["Pend. Dirección", 2],
     ["Aprobada (por liberar)", 3],
@@ -6518,7 +6601,7 @@ function VistaValidacion({ usuario }: { usuario: Usuario }) {
 
   return (
     <>
-      <h2>Cola de Validación</h2>
+      <h2>Cola de Calidad</h2>
       {error && <div className="error">{error}</div>}
       {mensaje && <div className="exito-msg">{mensaje}</div>}
 
@@ -6567,7 +6650,7 @@ function VistaValidacion({ usuario }: { usuario: Usuario }) {
             {colaFiltrada.length === 0 && (
               <tr>
                 <td colSpan={7} className="vacio">
-                  {cola.length === 0 ? "Sin operaciones en validación." : "Ninguna fila coincide con el filtro."}
+                  {cola.length === 0 ? "Sin operaciones en calidad." : "Ninguna fila coincide con el filtro."}
                 </td>
               </tr>
             )}
@@ -6593,8 +6676,8 @@ function VistaValidacion({ usuario }: { usuario: Usuario }) {
               }
             }}
           >
-            <h3 style={{ marginTop: 0 }}>Asignar / reasignar validación</h3>
-            <label>Operación en validación</label>
+            <h3 style={{ marginTop: 0 }}>Asignar / reasignar revisión de Calidad</h3>
+            <label>Operación en calidad</label>
             <select value={asig.operacion} onChange={(e) => setAsig({ ...asig, operacion: e.target.value })} required>
               <option value="">— Selecciona operación —</option>
               {cola.map((f) => (
@@ -6855,6 +6938,8 @@ function VistaTesoreria({ usuario }: { usuario: Usuario }) {
       {error && <div className="error">{error}</div>}
       {mensaje && <div className="exito-msg">{mensaje}</div>}
 
+      {/* Pronóstico de lo capturado por Operaciones (flujos, asimilados, frentes…). */}
+      <BarraPronostico />
       {/* Cuadre de respaldos por operación: lo que hay vs lo que se pagará. */}
       {(esValidador || esAdmin) && <PanelRespaldosOperaciones onError={setError} />}
       {/* Concentrado de movimientos bancarios (panel tipo Excel) con copia de

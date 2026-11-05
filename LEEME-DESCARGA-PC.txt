@@ -17,12 +17,45 @@ IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
 regenera automáticamente con un solo comando, ver paso 3).
 
 
-── NOVEDADES DE ESTA VERSIÓN (v4) ─────────────────────────────
+── NOVEDADES DE ESTA VERSIÓN (v5) ─────────────────────────────
+
+  · FORMATO DE OPERACIONES CON ESTILO DEL SITIO (más formal):
+    se quitaron los colores del Excel (verde/amarillo/rosa);
+    ahora todo usa la paleta institucional (azul marino y
+    grises del sistema), con celdas de sólo lectura en gris
+    claro y veredicto VERDADERO/FALSO en verde/rojo del sitio.
+  · ZOOM DEL FORMATO: en la barra bajo el título tienes
+    "Zoom  −  100%  +  Restablecer". Aleja (hasta 60%) para ver
+    la operación completa en una pantalla y acerca (hasta 150%)
+    para capturar cómodo. La preferencia se recuerda entre
+    sesiones. El botón "Pago especial" quedó en esa misma barra.
+  · DOS ESTADOS: GUARDAR y ENVIAR:
+      - GUARDAR deja la operación como BORRADOR (sigues
+        editándola desde Operaciones; ahí también puedes
+        "Enviar a Calidad" cuando esté lista).
+      - ENVIAR la manda directo a revisión de CALIDAD
+        (antes se llamaba Validación).
+    Al guardar como borrador el formato se limpia y te muestra
+    el folio asignado.
+  · BARRA DE PRONÓSTICO para Tesorería: arriba de "Pagos"
+    (rol tesorería, dirección, auditoría) y de "Tesorería —
+    Recursos" (admin_tesoreria / validador_tesoreria) aparece
+    "Pronóstico de operaciones capturadas": barra segmentada
+    con lo capturado por FLUJOS, ASIMILADOS, FRENTES, PAGOS
+    ESPECIALES y OTROS, con número de operaciones, monto total,
+    flujo a dispersar y desglose por estado (Borrador, En
+    calidad, etc.). Las pagadas y canceladas ya no entran.
+  · EL ÁREA DE VALIDACIÓN AHORA SE LLAMA CALIDAD: menú
+    "Calidad", "Cola de Calidad", estado "En calidad" y botón
+    "Enviar a Calidad". (Internamente sigue siendo el rol
+    "validacion"; no cambia nada de permisos.)
+
+── NOVEDADES DE LA VERSIÓN ANTERIOR (v4) ──────────────────────
 
   · NUEVA CAPTURA "NUEVA OPERACIÓN" = FORMATO DE OPERACIONES
     (idéntico al Excel del negocio; se quitó el formulario anterior):
-      - Barra verde FORMATO DE OPERACIONES con el Folio Ops (se
-        asigna al guardar).
+      - Barra de título azul marino FORMATO DE OPERACIONES con
+        el Folio Ops (se asigna al guardar).
       - Sección A: Fecha de la operación, Fecha del depósito,
         Empresa frente (RESGUARDO o frentes del catálogo), Banco
         del depósito y Monto Pagado.
@@ -49,10 +82,10 @@ regenera automáticamente con un solo comando, ver paso 3).
   · NUEVO CAMPO RFC en las dispersiones (columna del formato): se
     guarda en la base (migración automática) y viaja con la
     operación; también se acepta por layout (encabezado RFC).
-  · El botón "Pago especial (formato adjunto)" (fase 14) queda en
-    la esquina de la barra verde.
+  · El botón "Pago especial (formato adjunto)" (fase 14) queda
+    en la barra de herramientas del formato (junto al zoom).
 
-── NOVEDADES DE ESTA VERSIÓN (v3) ─────────────────────────────
+── NOVEDADES DE LA VERSIÓN ANTERIOR (v3) ──────────────────────
 
   · RESGUARDO TRF — REGLAS DEL NEGOCIO:
       - El ejecutivo de Operaciones (rol "operacion") YA NO VE el

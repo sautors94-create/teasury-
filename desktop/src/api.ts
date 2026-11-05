@@ -39,6 +39,7 @@ import type {
   OperacionBroker,
   Pago,
   Parametro,
+  Pronostico,
   ReporteDireccion,
   ResguardoBroker,
   ResguardoDetalle,
@@ -160,6 +161,8 @@ export const api = {
   liberar: (id: number) =>
     solicitar<{ operacion: Operacion }>(`/operaciones/${id}/liberar`, { method: "POST" }),
   resumenFondeador: () => solicitar<ResumenFondeador>("/fondeador/resumen"),
+  /** Barra de pronóstico: operaciones capturadas por FLUJOS/ASIMILADOS/FRENTES/etc. */
+  pronostico: () => solicitar<Pronostico>("/pronostico"),
   altasBancarias: (filtros: { estado?: string; operacion_id?: number } = {}) => {
     const params = new URLSearchParams();
     if (filtros.estado) params.set("estado", filtros.estado);

@@ -185,7 +185,7 @@ export interface Evento {
 
 export const ETIQUETAS_ESTADO: Record<Estado, string> = {
   borrador: "Borrador",
-  en_validacion: "En validación",
+  en_validacion: "En calidad",
   observada: "Observada",
   pendiente_direccion: "Pend. Dirección",
   aprobada: "Aprobada",
@@ -361,6 +361,20 @@ export interface AsignacionEjecutivo {
   ejecutivo: string;
   ejecutivo_username: string;
   asignador: string;
+}
+
+// ---- Barra de pronóstico (Tesorería): operaciones capturadas por categoría ----
+export interface PronosticoCategoria {
+  categoria: "FLUJOS" | "ASIMILADOS" | "FRENTES" | "PAGOS ESPECIALES" | "OTROS";
+  operaciones: number;
+  monto: number;
+  flujo_total: number;
+}
+
+export interface Pronostico {
+  categorias: PronosticoCategoria[];
+  por_estado: Array<{ estado: string; operaciones: number; monto: number }>;
+  total: { operaciones: number; monto: number; flujo_total: number };
 }
 
 export interface ResumenFondeador {

@@ -2211,6 +2211,72 @@ export function crearRouter(db: Database): Router {
     res.json({ por_estado: porEstado, por_tipo: porTipo, por_liberar: porLiberar, liberadas });
   });
 
+  // Barra de PRONÓSTICO para Tesorería: operaciones capturadas que siguen en
+  // proceso (borrador → en pago) agrupadas por categoría del negocio —
+  // FLUJOS, ASIMILADOS, FRENTES, PAGOS ESPECIALES y OTROS. Da el panorama de
+  // lo que viene (por validar, por dispersar) según lo capturado por Operaciones.
+  r.get(
+    "/pronostico",
+    autenticar,
+    requiereRol("tesoreria", "admin_tesoreria", "validador_tesoreria", "fondeador", "direccion", "auditoria", "admin"),
+    (_req, res) => {
+      const enProceso = ["borrador", "en_validacion", "observada", "pendiente_direccion", "aprobada", "en_pago"];
+      const marcadores = enProceso.map(() => "?").join(",");
+      const porCategoria = db
+        .prepare(
+          `SELECT CASE
+              WHEN o.tipo = 'pago_especial' THEN 'PAGOS ESPECIALES'
+              WHEN o.tipo_operacion LIKE '%asimilado%' THEN 'ASIMILADOS'
+              WHEN o.tipo_operacion LIKE '%frente%' THEN 'FRENTES'
+              WHEN o.tipo_operacion LIKE '%flujo%' THEN 'FLUJOS'
+              ELSE 'OTROS'
+            END AS categoria,
+            COUNT(*) AS operaciones,
+            COALESCE(SUM(o.monto), 0) AS monto,
+            COALESCE(SUM((SELECT COALESCE(SUM(d.importe), 0) FROM dispersiones d WHERE d.operacion_id = o.id)), 0) AS flujo_total
+          FROM operaciones o
+          WHERE o.estado IN (${marcadores})
+          GROUP BY categoria`
+        )
+        .all(...enProceso) as Array<{
+        categoria: string;
+        operaciones: number;
+        monto: number;
+        flujo_total: number;
+      }>;
+      // Orden estable del negocio: las categorías sin captura salen en ceros.
+      const orden = ["FLUJOS", "ASIMILADOS", "FRENTES", "PAGOS ESPECIALES", "OTROS"];
+      const categorias = orden.map((c) => {
+        const fila = porCategoria.find((x) => x.categoria === c);
+        return {
+          categoria: c,
+          operaciones: fila?.operaciones ?? 0,
+          monto: redondear2(fila?.monto ?? 0),
+          flujo_total: redondear2(fila?.flujo_total ?? 0),
+        };
+      });
+      const porEstado = db
+        .prepare(
+          `SELECT estado, COUNT(*) AS operaciones, COALESCE(SUM(monto), 0) AS monto
+           FROM operaciones WHERE estado IN (${marcadores}) GROUP BY estado`
+        )
+        .all(...enProceso) as Array<{ estado: string; operaciones: number; monto: number }>;
+      const total = categorias.reduce(
+        (acc, c) => ({
+          operaciones: acc.operaciones + c.operaciones,
+          monto: redondear2(acc.monto + c.monto),
+          flujo_total: redondear2(acc.flujo_total + c.flujo_total),
+        }),
+        { operaciones: 0, monto: 0, flujo_total: 0 }
+      );
+      res.json({
+        categorias,
+        por_estado: porEstado.map((e) => ({ ...e, monto: redondear2(e.monto) })),
+        total,
+      });
+    }
+  );
+
   // ---- Fase 12: altas bancarias (rol 'altas' — Tesorería de Altas) ----
   // El Ejecutivo solicita el registro de la cuenta de un beneficiario en el
   // banco (normalmente desde una línea de dispersión de su operación); el

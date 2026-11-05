@@ -44,6 +44,16 @@ const VACIA = (): LineaLayout => ({
   pagadora_cuenta_id: null,
 });
 
+const HOY = () => new Date().toISOString().slice(0, 10);
+const ZOOM_MIN = 0.6;
+const ZOOM_MAX = 1.5;
+
+/** Nivel de zoom del formato (se recuerda entre sesiones en localStorage). */
+const leerZoom = (): number => {
+  const v = Number(localStorage.getItem("fmt-zoom"));
+  return Number.isFinite(v) && v >= ZOOM_MIN && v <= ZOOM_MAX ? v : 1;
+};
+
 interface DestinoSel {
   cuenta_id: number | null;
   tipo: string;
@@ -116,6 +126,17 @@ export default function FormatoOperaciones({
   const [erroresLayout, setErroresLayout] = useState<string[]>([]);
   const [cuentasCat, setCuentasCat] = useState<CuentaCatalogo[]>([]);
   const [saldoCliente, setSaldoCliente] = useState(0);
+  // Zoom del formato: alejar para ver la operación completa, acercar para capturar.
+  const [zoom, setZoom] = useState(leerZoom);
+  const [folioGuardado, setFolioGuardado] = useState("");
+  // Actualización funcional: varios clics seguidos siempre avanzan un paso.
+  const ajustarZoom = (delta: number) =>
+    setZoom((prev) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((prev + delta) * 100) / 100)));
+  const restablecerZoom = () => setZoom(1);
+  // La preferencia de zoom se recuerda entre sesiones.
+  useEffect(() => {
+    localStorage.setItem("fmt-zoom", String(zoom));
+  }, [zoom]);
 
   useEffect(() => {
     api.clientes().then(({ clientes }) => setClientes(clientes)).catch(() => setClientes([]));
@@ -248,14 +269,22 @@ export default function FormatoOperaciones({
       lector.readAsDataURL(archivo);
     });
 
-  const guardar = async () => {
+  const guardar = async (modo: "borrador" | "enviar") => {
     const errores = validarLocal();
     if (errores.length) {
       onError(`Formato incompleto: ${errores.join(" · ")}`);
       return;
     }
-    if (!window.confirm("¿Guardar la operación en el sistema?")) return;
+    if (
+      !window.confirm(
+        modo === "enviar"
+          ? "¿Enviar la operación a Calidad? Pasará a revisión y ya no podrás editarla."
+          : "¿Guardar la operación como BORRADOR? Podrás seguir editándola desde Operaciones."
+      )
+    )
+      return;
     setGuardando(true);
+    setFolioGuardado("");
     try {
       const concepto = filas.find((d) => d.concepto.trim())?.concepto.trim() || "PAGO";
       const obsPartes = [
@@ -321,12 +350,54 @@ export default function FormatoOperaciones({
           onError(`La operación se creó, pero hubo un problema al subir comprobantes: ${(errComp as Error).message}`);
         }
       }
-      onCreada();
+      const folio = creada.operacion?.folio ?? "";
+      onError(""); // limpia errores previos de validación ya resueltos
+      if (modo === "enviar") {
+        // ENVIAR: guarda y manda la operación a revisión de Calidad (en_validacion).
+        try {
+          await api.enviarValidacion(creada.operacion.id);
+          onCreada();
+        } catch (errEnvio) {
+          onError(
+            `La operación ${folio} se guardó, pero no se pudo enviar a Calidad: ${(errEnvio as Error).message}. Envíala desde Operaciones.`
+          );
+          onCreada();
+        }
+      } else {
+        // GUARDAR: queda como BORRADOR, editable desde Operaciones.
+        reiniciarForma(folio);
+      }
     } catch (err) {
       onError((err as Error).message);
     } finally {
       setGuardando(false);
     }
+  };
+
+  /** Limpia el formato para capturar la siguiente operación. */
+  const reiniciarForma = (folio: string) => {
+    setClienteId("");
+    setRsCliente("");
+    setSlots([
+      { brokerId: "", pct: "" },
+      { brokerId: "", pct: "" },
+      { brokerId: "", pct: "" },
+      { brokerId: "", pct: "" },
+    ]);
+    setTimbrar(false);
+    setObservaciones("");
+    setMonto("");
+    setComisionPct("2.50");
+    setFecha(HOY());
+    setFechaDeposito("");
+    setFrenteSel("resguardo");
+    setPagadoraSel("");
+    setBancoDeposito("");
+    setArchivosDeposito([]);
+    setBancoComprobacion("MGN INTRUST");
+    setDispersiones([VACIA()]);
+    setErroresLayout([]);
+    setFolioGuardado(folio);
   };
 
   /** Celda de la sección (etiqueta + contenido coloreado). */
@@ -349,16 +420,38 @@ export default function FormatoOperaciones({
   );
 
   return (
-    <div className="fmt-hoja">
+    <div className="fmt-hoja" style={{ zoom }}>
       <div className="fmt-titulo">
         <span className="fmt-folio" title="El folio lo asigna el sistema al guardar">
           Folio Ops: al guardar
         </span>
         FORMATO DE OPERACIONES
+      </div>
+
+      {/* Herramientas: zoom para ver la operación completa + pago especial */}
+      <div className="fmt-toolbar">
+        <span>Zoom</span>
+        <button type="button" className="zoom-btn" onClick={() => ajustarZoom(-0.1)} disabled={zoom <= ZOOM_MIN} title="Alejar (ver la operación completa)" aria-label="Alejar">
+          −
+        </button>
+        <span className="zoom-nivel">{Math.round(zoom * 100)}%</span>
+        <button type="button" className="zoom-btn" onClick={() => ajustarZoom(0.1)} disabled={zoom >= ZOOM_MAX} title="Acercar" aria-label="Acercar">
+          +
+        </button>
+        <button type="button" className="zoom-restablecer" onClick={restablecerZoom} disabled={zoom === 1}>
+          Restablecer
+        </button>
         <button type="button" className="btn secundario fmt-btn-especial" onClick={onPagoEspecial}>
           Pago especial (formato adjunto)
         </button>
       </div>
+
+      {folioGuardado && (
+        <div className="fmt-exito">
+          Operación <b>{folioGuardado}</b> guardada como <b>BORRADOR</b>. Puedes seguirla editando desde
+          <b> Operaciones</b> o enviarla a Calidad con el botón <b>Enviar</b> cuando esté completa.
+        </div>
+      )}
 
       <div className="fmt-secciones">
         {/* ---- A: fechas, frente, banco y monto pagado ---- */}
@@ -601,7 +694,7 @@ export default function FormatoOperaciones({
       </div>
 
       {/* ---- Dispersión: tabla con los encabezados del formato ---- */}
-      <div className="fmt-barraverde">Dispersión</div>
+      <div className="fmt-barra-seccion">Dispersión</div>
       {erroresLayout.length > 0 && (
         <div className="error">
           {erroresLayout.slice(0, 5).map((e, i) => (
@@ -736,7 +829,7 @@ export default function FormatoOperaciones({
       </div>
 
       {/* ---- Observaciones ---- */}
-      <div className="fmt-barraverde">Observaciones o Instrucciones Especiales</div>
+      <div className="fmt-barra-seccion">Observaciones o Instrucciones Especiales</div>
       <textarea
         className="fmt-obs"
         value={observaciones}
@@ -746,12 +839,16 @@ export default function FormatoOperaciones({
       />
 
       <div className="barra" style={{ marginTop: "0.8rem" }}>
-        <button type="button" className="btn" onClick={() => void guardar()} disabled={guardando}>
-          {guardando ? "Guardando…" : "Guardar operación"}
+        <button type="button" className="btn secundario" onClick={() => void guardar("borrador")} disabled={guardando}>
+          {guardando ? "Guardando…" : "Guardar"}
+        </button>
+        <button type="button" className="btn" onClick={() => void guardar("enviar")} disabled={guardando}>
+          {guardando ? "Enviando…" : "Enviar"}
         </button>
         <small className="fmt-ayuda">
-          El Flujo Total es la suma de los importes y la comprobación debe dar VERDADERO (no puede exceder el Monto
-          Pagado). Las filas se agregan con “+ Agregar fila” o importando el layout.
+          <b>Guardar</b> deja la operación como BORRADOR (sigues editándola en Operaciones). <b>Enviar</b> la manda a
+          revisión de Calidad. El Flujo Total es la suma de los importes y la comprobación debe dar VERDADERO; las filas
+          se agregan con “+ Agregar fila” o importando el layout.
         </small>
       </div>
     </div>
