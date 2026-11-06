@@ -618,3 +618,25 @@ table.fmt-tabla { border-collapse: separate; border-spacing: 0; font-size: 0.8re
   .fmt-secciones { grid-template-columns: 1fr; }
   .fmt-check-datos { margin-left: 0; min-width: 0; width: 100%; }
 }
+
+/* ---- Sección Resguardos (unificada) ---- */
+.fila-sel { background: #eef4fb; }
+.fila-inactiva { opacity: 0.55; }
+
+/* ---- Estructuras de cuentas (Contaduría) ---- */
+.tabla-estructuras th,
+.tabla-estructuras td { font-size: 0.82rem; vertical-align: top; }
+.chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.2rem 0 0.6rem; }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  border: 1px solid var(--borde, #d7dde6); border-radius: 999px;
+  padding: 0.12rem 0.55rem; font-size: 0.78rem; cursor: pointer;
+  background: #fff; user-select: none;
+}
+.chip input { margin: 0; accent-color: var(--primario, #1f4e79); }
+.chip-activo { background: var(--primario, #1f4e79); color: #fff; border-color: var(--primario, #1f4e79); }
+.chip-activo input { accent-color: #fff; }
+.chip-frente { background: #eef4fb; border-color: #b9cfe4; }
+.chip-rb { background: #f4f0fa; border-color: #d3c6ea; }
+.chip-flujos { background: #eefaf1; border-color: #b9e2c4; }
+.chip-sofom { background: #fdf4ec; border-color: #ecd3b4; }

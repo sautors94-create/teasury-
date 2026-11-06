@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { RUTA_DB } from "./config.js";
 import { SEMILLA_BANCOS } from "./semilla-bancos.js";
+import { SEMILLA_ESTRUCTURAS } from "./semilla-estructuras.js";
 
 export type Rol =
   | "admin"
@@ -19,9 +20,11 @@ export type Rol =
   | "fondeador"
   | "altas"
   | "direccion"
-  | "auditoria";
+  | "auditoria"
+  | "contaduria";
 
-/** Todos los roles válidos del sistema (docs/roles: 01-ROLES.md §3-§8 + Fondeador y Altas). */
+/** Todos los roles válidos del sistema (docs/roles: 01-ROLES.md §3-§8 + Fondeador,
+ *  Altas y Contaduría — solicitudes de timbrado y estructuras de cuentas). */
 export const ROLES: Rol[] = [
   "admin",
   "admin_operaciones",
@@ -36,6 +39,7 @@ export const ROLES: Rol[] = [
   "altas",
   "direccion",
   "auditoria",
+  "contaduria",
 ];
 
 /** Tipos de cuenta de Tesorería (el negocio opera flujos, frentes, préstamos,
@@ -476,7 +480,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   username      TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   nombre        TEXT NOT NULL,
-  rol           TEXT NOT NULL CHECK (rol IN ('admin','admin_operaciones','admin_validacion','admin_tesoreria','operacion','validacion','validador_tesoreria','confirmador','tesoreria','fondeador','altas','direccion','auditoria')),
+  rol           TEXT NOT NULL CHECK (rol IN ('admin','admin_operaciones','admin_validacion','admin_tesoreria','operacion','validacion','validador_tesoreria','confirmador','tesoreria','fondeador','altas','direccion','auditoria','contaduria')),
   activo        INTEGER NOT NULL DEFAULT 1
 );
 
@@ -870,6 +874,34 @@ CREATE TABLE IF NOT EXISTS pagos_especiales (
   creado_en           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Estructuras de cuentas (Ejercicio 2026, formato que comparte Contaduría):
+-- una fila por razón social del negocio (FRENTE, RB de un frente, FLUJOS o
+-- SOFOM) con su giro, núcleo de frentes, importe máximo para bajar por mes,
+-- bancos donde tiene cuenta (JSON) y trámites (SUCURSAL, REPSE, INE, CFE…).
+-- Contaduría la mantiene; Tesorería la consulta y activa/desactiva. Va ligada
+-- a las cuentas de Tesorería (cuenta_id) y alimenta el catálogo de captura.
+CREATE TABLE IF NOT EXISTS estructuras (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  cuenta_id         INTEGER REFERENCES cuentas(id),
+  giro              TEXT NOT NULL DEFAULT '',
+  nucleo            TEXT NOT NULL DEFAULT '',
+  razon_social      TEXT NOT NULL,
+  tipo              TEXT NOT NULL CHECK (tipo IN ('FRENTE','RB','FLUJOS','SOFOM')),
+  empresa           TEXT NOT NULL DEFAULT '',
+  importe_maximo    TEXT NOT NULL DEFAULT '',
+  observaciones     TEXT NOT NULL DEFAULT '',
+  estatus_operacion INTEGER NOT NULL DEFAULT 1,
+  bancos            TEXT NOT NULL DEFAULT '{}',
+  total_cuentas     INTEGER NOT NULL DEFAULT 0,
+  extras            TEXT NOT NULL DEFAULT '{}',
+  observaciones2    TEXT NOT NULL DEFAULT '',
+  creado_por        INTEGER NOT NULL REFERENCES usuarios(id),
+  creado_en         TEXT NOT NULL DEFAULT (datetime('now')),
+  actualizado_en    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_estructuras_cuenta ON estructuras(cuenta_id);
+CREATE INDEX IF NOT EXISTS idx_estructuras_razon ON estructuras(razon_social);
+
 -- Fase 15 — Catálogo de bancos SPEI: la clave son los 3 primeros dígitos de la
 -- CLABE. Sembrado con los 92 bancos del formato de alta de cuentas.
 CREATE TABLE IF NOT EXISTS bancos_spei (
@@ -1077,6 +1109,7 @@ export function abrirBase(ruta: string = RUTA_DB): Database.Database {
   migrarPagos(db);
   migrarDispersionesRfc(db);
   migrarUsuarios(db);
+  migrarRolContaduria(db);
   migrarOperacionesCliente(db);
   migrarCapturaFlujo(db);
   migrarRespaldosFinanciamientos(db);
@@ -1091,7 +1124,64 @@ export function abrirBase(ruta: string = RUTA_DB): Database.Database {
   sembrarCatalogosYParametros(db);
   sembrarBancosSpei(db);
   sembrarCuentasTesoreria(db);
+  sembrarEstructuras(db);
   return db;
+}
+
+/** Estructura de cuenta (formato Ejercicio 2026 que comparte Contaduría). */
+export interface Estructura {
+  id: number;
+  cuenta_id: number | null;
+  giro: string;
+  nucleo: string;
+  razon_social: string;
+  tipo: "FRENTE" | "RB" | "FLUJOS" | "SOFOM";
+  empresa: string;
+  importe_maximo: string;
+  observaciones: string;
+  estatus_operacion: number;
+  bancos: Record<string, number>;
+  total_cuentas: number;
+  extras: Record<string, number>;
+  observaciones2: string;
+  creado_por: number;
+  creado_en: string;
+  actualizado_en: string | null;
+}
+
+/**
+ * Semilla de estructuras (sólo si la tabla está vacía): carga el catálogo
+ * Ejercicio 2026 que comparte Contaduría para que el sistema nazca con la
+ * misma estructura que ellos manejan en el Excel.
+ */
+function sembrarEstructuras(db: Database.Database): void {
+  const cuenta = db.prepare("SELECT COUNT(*) AS n FROM estructuras").get() as { n: number };
+  if (cuenta.n > 0) return;
+  const insertar = db.prepare(
+    `INSERT INTO estructuras (giro, nucleo, razon_social, tipo, empresa, importe_maximo,
+       observaciones, estatus_operacion, bancos, total_cuentas, extras, observaciones2, creado_por)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+  );
+  const tx = db.transaction(() => {
+    for (const f of SEMILLA_ESTRUCTURAS) {
+      insertar.run(
+        f.giro,
+        f.nucleo,
+        f.razon_social,
+        f.tipo,
+        f.empresa,
+        f.importe_maximo,
+        f.observaciones,
+        f.estatus_operacion,
+        JSON.stringify(f.bancos),
+        f.total_cuentas,
+        JSON.stringify(f.extras),
+        f.observaciones2
+      );
+    }
+  });
+  tx();
+  console.log(`[semilla] estructuras de cuentas (Ejercicio 2026): ${SEMILLA_ESTRUCTURAS.length} fila(s)`);
 }
 
 /**
@@ -1205,6 +1295,43 @@ function migrarUsuarios(db: Database.Database): void {
     db.pragma("legacy_alter_table = OFF");
     db.pragma("foreign_keys = ON");
     console.log("[migración] usuarios reconstruida con los 10 roles del sistema");
+  } catch (e) {
+    db.pragma("legacy_alter_table = OFF");
+    db.pragma("foreign_keys = ON");
+    throw e;
+  }
+}
+
+/**
+ * Contaduría: reconstruye `usuarios` si su CHECK de rol aún no incluye
+ * 'contaduria' (bases creadas antes de este rol). Conserva todo el contenido.
+ */
+function migrarRolContaduria(db: Database.Database): void {
+  const tabla = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'usuarios'")
+    .get() as { sql: string } | undefined;
+  if (!tabla || tabla.sql.includes("'contaduria'")) return;
+
+  db.pragma("foreign_keys = OFF");
+  db.pragma("legacy_alter_table = ON");
+  try {
+    db.exec(`
+      ALTER TABLE usuarios RENAME TO usuarios_old;
+      CREATE TABLE usuarios (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        username      TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        nombre        TEXT NOT NULL,
+        rol           TEXT NOT NULL CHECK (rol IN ('admin','admin_operaciones','admin_validacion','admin_tesoreria','operacion','validacion','validador_tesoreria','confirmador','tesoreria','fondeador','altas','direccion','auditoria','contaduria')),
+        activo        INTEGER NOT NULL DEFAULT 1
+      );
+      INSERT INTO usuarios (id, username, password_hash, nombre, rol, activo)
+        SELECT id, username, password_hash, nombre, rol, activo FROM usuarios_old;
+      DROP TABLE usuarios_old;
+    `);
+    db.pragma("legacy_alter_table = OFF");
+    db.pragma("foreign_keys = ON");
+    console.log("[migración] usuarios reconstruida: rol 'contaduria' añadido");
   } catch (e) {
     db.pragma("legacy_alter_table = OFF");
     db.pragma("foreign_keys = ON");
@@ -1744,6 +1871,7 @@ function sembrarUsuarios(db: Database.Database): void {
     ["altas", "Tesorería de Altas", "altas"],
     ["direccion", "Dirección", "direccion"],
     ["auditor", "Auditoría", "auditoria"],
+    ["1contaduria", "Contaduría (timbrado y estructuras)", "contaduria"],
   ];
   for (const [username, nombre, rol] of semilla) {
     // Password por defecto igual al username (cambiar en producción).
@@ -1768,6 +1896,7 @@ function asegurarUsuariosBase(db: Database.Database): void {
     ["confirmador", "Confirmador de Depósitos", "confirmador"],
     ["fondeador", "Tesorero Fondeador", "fondeador"],
     ["altas", "Tesorería de Altas", "altas"],
+    ["1contaduria", "Contaduría (timbrado y estructuras)", "contaduria"],
   ];
   for (const [username, nombre, rol] of base) {
     insertar.run(username, bcrypt.hashSync(username, 10), nombre, rol);

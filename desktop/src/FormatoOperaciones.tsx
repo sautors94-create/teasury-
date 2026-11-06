@@ -6,7 +6,7 @@ import {
   mapearDispersiones,
   type LineaLayout,
 } from "./layout";
-import type { Broker, Cliente, CuentaCatalogo, Usuario } from "./tipos";
+import type { Broker, Cliente, CuentaCatalogo, EstructuraCatalogo, Usuario } from "./tipos";
 
 /**
  * FORMATO DE OPERACIONES (captura de flujo) — reproduce el formato de Excel
@@ -21,6 +21,13 @@ import type { Broker, Cliente, CuentaCatalogo, Usuario } from "./tipos";
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const fmt = (n: number) => n.toLocaleString("es-MX", { minimumFractionDigits: 2 });
+
+/** Cuenta del catálogo elegida en un select de pagadora/frente ("c<id>"). */
+function pagadoraElegidaCuenta(catalogo: CuentaCatalogo[], sel: string): number | null {
+  if (!sel.startsWith("c")) return null;
+  const c = catalogo.find((x) => `c${x.id}` === sel);
+  return c ? c.id : null;
+}
 
 const VACIA = (): LineaLayout => ({
   beneficiario: "",
@@ -161,6 +168,25 @@ export default function FormatoOperaciones({
 
   const catalogoPagadoras = useMemo(() => cuentasCat.filter((c) => c.visible_operador !== 0), [cuentasCat]);
   const frentes = useMemo(() => catalogoPagadoras.filter((c) => c.tipo === "frente"), [catalogoPagadoras]);
+
+  // Estructuras de cuentas (Contaduría): el catálogo del negocio ligado a la
+  // captura — al elegir pagadora/frente se muestra su estructura (giro,
+  // importe máximo por mes) y queda disponible como referencia.
+  const [estructurasCat, setEstructurasCat] = useState<EstructuraCatalogo[]>([]);
+  useEffect(() => {
+    api
+      .catalogoEstructuras()
+      .then(({ estructuras }) => setEstructurasCat(estructuras))
+      .catch(() => setEstructurasCat([]));
+  }, []);
+  const estructuraPagadora = useMemo(() => {
+    const pid = pagadoraElegidaCuenta(catalogoPagadoras, pagadoraSel);
+    return (pid && estructurasCat.find((e) => e.cuenta_id === pid)) || null;
+  }, [pagadoraSel, catalogoPagadoras, estructurasCat]);
+  const estructuraFrente = useMemo(() => {
+    const fid = pagadoraElegidaCuenta(catalogoPagadoras, frenteSel);
+    return (fid && estructurasCat.find((e) => e.cuenta_id === fid)) || null;
+  }, [frenteSel, catalogoPagadoras, estructurasCat]);
 
   const pagadoraElegida: DestinoSel | null = useMemo(() => {
     if (!pagadoraSel) return null;
@@ -465,7 +491,15 @@ export default function FormatoOperaciones({
               <Celda etiqueta="Fecha del deposito" color="verde">
                 <input type="date" value={fechaDeposito} onChange={(e) => setFechaDeposito(e.target.value)} />
               </Celda>
-              <Celda etiqueta="Empresa frente" color="azul">
+              <Celda
+                etiqueta="Empresa frente"
+                color="azul"
+                nota={
+                  estructuraFrente
+                    ? `ESTRUCTURA: ${estructuraFrente.giro || "—"} — ${estructuraFrente.importe_maximo || "sin límite indicado"}`
+                    : undefined
+                }
+              >
                 <select value={frenteSel} onChange={(e) => setFrenteSel(e.target.value)}>
                   <option value="resguardo">RESGUARDO</option>
                   {frentes.map((f) => (
@@ -616,7 +650,15 @@ export default function FormatoOperaciones({
           <div className="fmt-sec">
             <span className="fmt-letra">C</span>
             <div className="fmt-filas">
-              <Celda etiqueta="Pagadora" color="amarilla">
+              <Celda
+                etiqueta="Pagadora"
+                color="amarilla"
+                nota={
+                  estructuraPagadora
+                    ? `ESTRUCTURA: ${estructuraPagadora.giro || "—"} — ${estructuraPagadora.importe_maximo || "sin límite indicado"}${estructuraPagadora.tipo ? ` (${estructuraPagadora.tipo})` : ""}`
+                    : undefined
+                }
+              >
                 <select value={pagadoraSel} onChange={(e) => setPagadoraSel(e.target.value)}>
                   <option value="">— Selecciona la pagadora ({catalogoPagadoras.length} disponibles) —</option>
                   <option value="tflujo">CUALQUIER FLUJO — Tesorería determina la cuenta</option>

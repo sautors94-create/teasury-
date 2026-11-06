@@ -17,7 +17,60 @@ IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
 regenera automáticamente con un solo comando, ver paso 3).
 
 
-── NOVEDADES DE ESTA VERSIÓN (v6) ─────────────────────────────
+── NOVEDADES DE ESTA VERSIÓN (v7) ─────────────────────────────
+
+  · SECCIÓN RESGUARDOS (sustituye al apartado "Resguardo TRF"):
+    está en el menú para Admin de Tesorería, Admin de
+    Operaciones, Admin de Calidad, Validador de Tesorería,
+    Tesorería, Fondeador, Dirección, Auditoría y admin.
+      - Muestra TODOS los resguardos: uno por cliente con su
+        saldo, número de movimientos y último movimiento, más
+        la tarjeta del resguardo de la empresa (TRF) con su
+        equivalente en pesos y su ledger al darle "Ver
+        movimientos".
+      - Al elegir un resguardo ves SUS MOVIMIENTOS DEL MES con
+        el saldo de apertura del mes y el saldo acumulado fila
+        por fila (como el Excel del concentrado). Los roles
+        SIN historial completo sólo ven el mes EN CURSO
+        (el sistema lo fuerza también en el backend).
+      - SÓLO Tesorería (analista y admin), Auditoría y
+        Dirección (más el admin) ven el HISTORIAL COMPLETO
+        desde todos los tiempos: checkbox "Historial completo
+        (todos los tiempos)".
+  · NUEVO USUARIO Y ROL: 1contaduria (contraseña 1contaduria),
+    rol "contaduria". Tiene dos secciones:
+      - TIMBRADO: recibe las solicitudes de facturación — las
+        operaciones capturadas con Timbrar = SÍ. Lista con
+        folio, fecha, cliente, monto, estado y dispersión; al
+        dar clic en una se abre el DETALLE de la operación en
+        sólo lectura (datos, dispersión, pagos). No puede ver
+        operaciones que no piden timbrado (el backend lo
+        bloquea).
+      - ESTRUCTURAS: el catálogo de cuentas del negocio
+        (formato "ESTRUCTURAS EJERCICIO 2026" que comparte
+        Contaduría). El sistema ya nace cargado con las 305
+        filas del Excel: frentes, RB, flujos y SOFOM con giro,
+        núcleo de frentes, empresa/frente al que pertenecen,
+        importe máximo para bajar por mes, bancos donde tienen
+        cuenta (JS, BANORTE, SANTANDER… TRAFALGAR) y trámites
+        (SUCURSAL, REPSE 2023-2025, INE, TIANGUIS DIGITAL,
+        COMPRA NET, padrones, CFE, INM, RP, ISN).
+          + Contaduría puede CREAR y EDITAR estructuras
+            (frentes y sus RB), ligar cada estructura a su
+            cuenta de Tesorería y CARGAR EL LAYOUT (sube el
+            mismo Excel que comparten: actualiza las filas que
+            coinciden y crea las nuevas; hay plantilla
+            descargable).
+          + Admin de Tesorería la consulta, EDITA y maneja el
+            ESTATUS (Activa / Inactiva) para saber cuáles
+            están operando.
+  · LIGADO A OPERACIONES: las estructuras ACTIVAS alimentan el
+    catálogo que ve el Ejecutivo al capturar — al elegir la
+    Empresa frente o la Pagadora, el formato muestra
+    "ESTRUCTURA: <giro> — <importe máximo por mes> (<tipo>)"
+    de la estructura ligada a esa cuenta.
+
+── NOVEDADES DE LA VERSIÓN ANTERIOR (v6) ──────────────────────
 
   · COMPROBANTES: AHORA SÍ SUBEN. Se admiten TODOS los formatos
     (PDF, imágenes, XML de CFDI, hojas de cálculo, etc.) excepto

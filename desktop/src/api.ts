@@ -43,6 +43,11 @@ import type {
   ReporteDireccion,
   ResguardoBroker,
   ResguardoDetalle,
+  ResguardoLista,
+  ResguardoMesDetalle,
+  Estructura,
+  EstructuraCatalogo,
+  SolicitudTimbrado,
   ResumenFondeador,
   Revision,
   Rol,
@@ -652,6 +657,54 @@ export const api = {
     ),
   accesosBoveda: (cuentaId: number) =>
     solicitar<{ accesos: AccesoCredencial[] }>(`/cuentas/${cuentaId}/credenciales/accesos`),
+
+  // ---- Sección RESGUARDOS (unificada) ----
+  resguardos: () => solicitar<ResguardoLista>("/resguardos"),
+  /** Detalle del resguardo de un cliente; `mes` (YYYY-MM) opcional — los roles
+   *  sin historial completo siempre reciben el mes en curso (lo fuerza el API). */
+  resguardoMes: (clienteId: number, mes?: string) =>
+    solicitar<ResguardoMesDetalle>(
+      `/clientes/${clienteId}/resguardo${mes ? `?mes=${encodeURIComponent(mes)}` : ""}`
+    ),
+
+  // ---- Contaduría: timbrado + estructuras ----
+  solicitudesTimbrado: () =>
+    solicitar<{ solicitudes: SolicitudTimbrado[]; total: number; por_estado: Record<string, number> }>(
+      "/timbrado/solicitudes"
+    ),
+  estructuras: (filtros?: { q?: string; tipo?: string; estatus?: string }) => {
+    const p = new URLSearchParams();
+    if (filtros?.q) p.set("q", filtros.q);
+    if (filtros?.tipo) p.set("tipo", filtros.tipo);
+    if (filtros?.estatus) p.set("estatus", filtros.estatus);
+    const qs = p.toString();
+    return solicitar<{ estructuras: Estructura[]; total: number }>(`/estructuras${qs ? `?${qs}` : ""}`);
+  },
+  catalogoEstructuras: () => solicitar<{ estructuras: EstructuraCatalogo[] }>("/estructuras/catalogo"),
+  crearEstructura: (datos: Record<string, unknown>) =>
+    solicitar<{ estructura: Estructura }>("/estructuras", { method: "POST", body: JSON.stringify(datos) }),
+  editarEstructura: (id: number, datos: Record<string, unknown>) =>
+    solicitar<{ estructura: Estructura }>(`/estructuras/${id}`, { method: "PATCH", body: JSON.stringify(datos) }),
+  estatusEstructura: (id: number, estatus_operacion: boolean) =>
+    solicitar<{ estructura: Estructura }>(`/estructuras/${id}/estatus`, {
+      method: "PATCH",
+      body: JSON.stringify({ estatus_operacion }),
+    }),
+  cargarLayoutEstructuras: (
+    filas: Array<Record<string, unknown>>
+  ) =>
+    solicitar<{
+      creadas: number;
+      actualizadas: number;
+      errores: string[];
+      detalles_creadas: string[];
+      detalles_actualizadas: string[];
+    }>("/estructuras/layout", { method: "POST", body: JSON.stringify({ filas }) }),
+  /** Nombres (sin números) de las cuentas activas para ligar estructuras. */
+  cuentasNombres: () =>
+    solicitar<{ cuentas: Array<{ id: number; nombre: string; banco: string; tipo: string }> }>(
+      "/cuentas/nombres"
+    ),
 };
 
 /** Descarga el concentrado CSV (requiere rol tesoreria, direccion o auditoria). */

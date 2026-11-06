@@ -4,7 +4,7 @@
  * Deja el sistema "como recién instalado" conservando:
  *   - Las CUENTAS de tesorería (catálogo sembrado y las que hayas creado).
  *   - Los usuarios administrativos base: admin, admin_ops, admin_validacion,
- *     admin_tesoreria, val_tesoreria y confirmador.
+ *     admin_tesoreria, val_tesoreria, confirmador y 1contaduria.
  *   - Los catálogos (pagadoras, pagador/tipo FLUJOS) y parámetros
  *     (umbral de Dirección).
  *
@@ -14,7 +14,7 @@
  *   movimientos bancarios del concentrado, aplicaciones de recursos,
  *   asignaciones (clientes, validación, cuentas) y coberturas,
  *   revisiones, bitácora/auditoría, clientes, brokers y colas de sync.
- *   También elimina cualquier usuario que no sea de los 6 base.
+ *   También elimina cualquier usuario que no sea de los 7 base.
  *
  * Crea usuarios de prueba (contraseña = username):
  *   5 ejecutivos de operaciones (operador1..5), 2 validadores
@@ -48,6 +48,7 @@ const USUARIOS_BASE = [
   "admin_tesoreria",
   "val_tesoreria",
   "confirmador",
+  "1contaduria",
 ];
 
 /** Tablas de trabajo que se vacían por completo. */
@@ -132,8 +133,8 @@ function plan(): void {
   console.log("                  depósitos, comprobantes, financiamientos, resguardos,");
   console.log("                  concentrado bancario, asignaciones, bitácora, clientes, brokers...)");
   console.log("  Se conservan  : cuentas de tesorería, usuarios base (admin, admin_ops,");
-  console.log("                  admin_validacion, admin_tesoreria, val_tesoreria, confirmador),");
-  console.log("                  catálogos y parámetros.");
+  console.log("                  admin_validacion, admin_tesoreria, val_tesoreria, confirmador,");
+  console.log("                  1contaduria), estructuras de cuentas, catálogos y parámetros.");
   console.log("  Se eliminan   : los demás usuarios (por ejemplo 'operador', 'validador',");
   console.log("                  'tesoreria', 'direccion', 'auditor' de la semilla original).");
   console.log(`  Se crean      : ${NUEVOS_USUARIOS.length} usuarios, ${BROKERS.length} brokers, ${CLIENTES.length} clientes (asignados a operador1..5).`);

@@ -11,7 +11,8 @@ export type Rol =
   | "fondeador"
   | "altas"
   | "direccion"
-  | "auditoria";
+  | "auditoria"
+  | "contaduria";
 
 export const ETIQUETAS_ROL: Record<Rol, string> = {
   admin: "Administrador del sistema",
@@ -27,6 +28,7 @@ export const ETIQUETAS_ROL: Record<Rol, string> = {
   altas: "Tesorería de Altas",
   direccion: "Dirección",
   auditoria: "Auditoría",
+  contaduria: "Contaduría (timbrado y estructuras)",
 };
 
 // ---- Tipos de cuenta de Tesorería (sólo el Administrador crea cuentas) ----
@@ -888,4 +890,121 @@ export interface FilaPortalAltas {
   moneda: string;
   estado_alta: AltaBancaria["estado"];
   registrador?: string | null;
+}
+
+// ---- Sección RESGUARDOS (unificada; sustituye al apartado 'Resguardo TRF') ----
+
+/** Fila del listado de resguardos: uno por cliente + resumen del resguardo TRF. */
+export interface ResguardoResumen {
+  cliente_id: number;
+  cliente: string;
+  activo: number;
+  saldo: number;
+  movimientos_count: number;
+  ultimo_movimiento: string | null;
+}
+
+export interface ResguardoLista {
+  resguardos: ResguardoResumen[];
+  trf: {
+    saldos: Array<{ moneda: string; saldo: number; equivalente_mxn: number }>;
+    equivalente_total_mxn: number;
+  };
+}
+
+/** Detalle del resguardo de UN mes (con saldo de apertura, como el Excel). */
+export interface ResguardoMesDetalle extends ResguardoDetalle {
+  mes: string;
+  historial_completo: boolean;
+  saldo_anterior: number;
+}
+
+// ---- Contaduría: solicitudes de timbrado (facturación) ----
+
+export interface SolicitudTimbrado {
+  id: number;
+  folio: string;
+  fecha_operacion: string;
+  estado: string;
+  monto: number;
+  moneda: string;
+  tipo: string;
+  tipo_operacion: string | null;
+  comision_pct: number | null;
+  cliente: string | null;
+  capturado_por: string;
+  dispersiones_count: number;
+}
+
+// ---- Estructuras de cuentas (formato Ejercicio 2026 de Contaduría) ----
+
+export type TipoEstructura = "FRENTE" | "RB" | "FLUJOS" | "SOFOM";
+
+export interface Estructura {
+  id: number;
+  cuenta_id: number | null;
+  giro: string;
+  nucleo: string;
+  razon_social: string;
+  tipo: TipoEstructura;
+  empresa: string;
+  importe_maximo: string;
+  observaciones: string;
+  estatus_operacion: number;
+  bancos: Record<string, number>;
+  total_cuentas: number;
+  extras: Record<string, number>;
+  observaciones2: string;
+  creado_en: string;
+  actualizado_en: string | null;
+  cuenta?: string | null;
+  cuenta_banco?: string | null;
+}
+
+/** Columnas de bancos y trámites del formato (en el orden del Excel). */
+export const BANCOS_ESTRUCTURA = [
+  "JS",
+  "BANORTE",
+  "BANORTE US",
+  "SANTANDER",
+  "SANTANDER US",
+  "BANCOMER",
+  "BANCOMER US",
+  "E PLATA",
+  "E PLATA 02",
+  "KLU",
+  "AFIRME",
+  "KUSPID",
+  "TRAFALGAR",
+] as const;
+
+export const EXTRAS_ESTRUCTURA = [
+  "SUCURSAL",
+  "REPSE 2023",
+  "REPSE 2024",
+  "REPSE 2025",
+  "INE",
+  "TIANGUIS DIGITAL",
+  "COMPRA NET",
+  "PADRON DE PROVEEDORES MUNICIPAL QRO",
+  "PADRON PROVEEDORES ESTATAL QRO",
+  "PADRON PROVEEDOR PUEBLA",
+  "CFE",
+  "INM CONSTANCIA DE EMPLEADOR",
+  "RP",
+  "ISN",
+] as const;
+
+/** Catálogo activo para la captura (frentes/RB vigentes con importe máximo). */
+export interface EstructuraCatalogo {
+  id: number;
+  cuenta_id: number | null;
+  giro: string;
+  nucleo: string;
+  razon_social: string;
+  tipo: TipoEstructura;
+  empresa: string;
+  importe_maximo: string;
+  total_cuentas: number;
+  cuenta: string | null;
 }

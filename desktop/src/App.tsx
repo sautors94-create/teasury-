@@ -3,8 +3,10 @@ import { api, descargarConcentrado, getToken, setToken } from "./api";import For
 import {
   descargarPlantillaCuentas,
   descargarPlantillaDispersiones,
+  descargarPlantillaEstructuras,
   descargarPlantillaTandas,
   leerFilas,
+  leerFilasEstructuras,
   mapearCuentasLayout,
   mapearDispersiones,
   mapearTandas,
@@ -17,6 +19,8 @@ import {
   MEDIOS_PAGO,
   MONEDAS_COMUNES,
   TIPOS_CUENTA,
+  BANCOS_ESTRUCTURA,
+  EXTRAS_ESTRUCTURA,
   type Broker,
   type CalculosFlujo,
   type DetalleOperacion,
@@ -46,6 +50,8 @@ import type {
   CuentaCatalogo,
   DepositoOperacion,
   DepositoPendiente,
+  Estructura,
+  EstructuraCatalogo,
   Financiamiento,
   FilaColaValidacion,
   FilaRespaldoOperacion,
@@ -54,6 +60,9 @@ import type {
   Pronostico,
   ResguardoBroker,
   ResguardoDetalle,
+  ResguardoLista,
+  ResguardoMesDetalle,
+  SolicitudTimbrado,
   ResumenFondeador,
   UsuarioAdmin,
 } from "./tipos";
@@ -461,7 +470,9 @@ type Vista =
   | "tesoreria"
   | "fondeo"
   | "altas"
-  | "trf";
+  | "resguardos"
+  | "timbrado"
+  | "estructuras";
 
 export default function App() {
   const [usuario, setUsuario] = useState<Usuario | null>(null);
@@ -481,7 +492,9 @@ export default function App() {
       <Login
         onLogin={(u) => {
           setUsuario(u);
-          setVista("operaciones");
+          // Contaduría entra directo a sus solicitudes de timbrado; el resto a
+          // su vista de Operaciones de siempre.
+          setVista(u.rol === "contaduria" ? "timbrado" : "operaciones");
         }}
       />
     );
@@ -525,11 +538,31 @@ export default function App() {
             Fondeo
           </button>
         )}
-        {["admin_operaciones", "admin_tesoreria", "validador_tesoreria", "tesoreria", "fondeador", "admin", "direccion", "auditoria"].includes(
-          usuario.rol
-        ) && (
-          <button className={vista === "trf" ? "activo" : ""} onClick={() => setVista("trf")}>
-            Resguardo TRF
+        {/* Sección RESGUARDOS: sustituye al antiguo apartado 'Resguardo TRF'
+            y muestra TODOS los resguardos (clientes + empresa/TRF). */}
+        {[
+          "admin_operaciones",
+          "admin_tesoreria",
+          "admin_validacion",
+          "validador_tesoreria",
+          "tesoreria",
+          "fondeador",
+          "admin",
+          "direccion",
+          "auditoria",
+        ].includes(usuario.rol) && (
+          <button className={vista === "resguardos" ? "activo" : ""} onClick={() => setVista("resguardos")}>
+            Resguardos
+          </button>
+        )}
+        {usuario.rol === "contaduria" && (
+          <button className={vista === "timbrado" ? "activo" : ""} onClick={() => setVista("timbrado")}>
+            Timbrado
+          </button>
+        )}
+        {(usuario.rol === "contaduria" || usuario.rol === "admin_tesoreria" || usuario.rol === "admin") && (
+          <button className={vista === "estructuras" ? "activo" : ""} onClick={() => setVista("estructuras")}>
+            Estructuras
           </button>
         )}
         {["operacion", "altas", "admin_tesoreria", "admin", "admin_operaciones", "fondeador", "validador_tesoreria", "direccion", "auditoria"].includes(
@@ -620,7 +653,9 @@ export default function App() {
         {vista === "tesoreria" && <VistaTesoreria usuario={usuario} />}
         {vista === "fondeo" && <VistaFondeo />}
         {vista === "altas" && <VistaAltas usuario={usuario} />}
-        {vista === "trf" && <VistaTrfResguardo usuario={usuario} />}
+        {vista === "resguardos" && <VistaResguardos usuario={usuario} />}
+        {vista === "timbrado" && <VistaTimbrado usuario={usuario} />}
+        {vista === "estructuras" && <VistaEstructuras usuario={usuario} />}
       </main>
     </div>
   );
@@ -6332,290 +6367,6 @@ function PanelTrabajarPortal({ onError, onOk }: { onError: (m: string) => void; 
  * movimiento; los movimientos en moneda distinta de MXN muestran SIEMPRE su
  * tipo de cambio, para que los resguardos cuadren.
  */
-function VistaTrfResguardo({ usuario }: { usuario: Usuario }) {
-  const [detalle, setDetalle] = useState<TrfResguardoDetalle | null>(null);
-  const [error, setError] = useState("");
-  const [mensaje, setMensaje] = useState("");
-  const [filtro, setFiltro] = useState("");
-  // Ajuste del negocio: el resguardo de TRF ya NO lo manejan los ejecutivos —
-  // se modifica SÓLO con operaciones (pago especial desde TRF, comisión TRF de
-  // los flujos) y se aplica AL AUTORIZARSE. Los movimientos manuales son
-  // correcciones exclusivas del admin.
-  const puedeRegistrar = usuario.rol === "admin";
-  const [form, setForm] = useState({
-    tipo: "ingreso" as "ingreso" | "retiro",
-    importe: "",
-    moneda: "MXN",
-    monedaLibre: "",
-    tipo_cambio: "",
-    operacion_id: "",
-    notas: "",
-  });
-
-  const cargar = () => {
-    api
-      .trfResguardo()
-      .then(setDetalle)
-      .catch((err: Error) => setError(err.message));
-  };
-
-  useEffect(() => {
-    cargar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const monedaFinal =
-    form.moneda === "otra" ? form.monedaLibre.trim().toUpperCase() : form.moneda;
-  const requiereTC = monedaFinal !== "MXN";
-
-  const registrar = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    if (!/^[A-Z]{3}$/.test(monedaFinal)) {
-      setError("Especifica la moneda (elige de la lista o escribe el código de 3 letras).");
-      return;
-    }
-    if (!(Number(form.importe) > 0)) {
-      setError("El importe debe ser mayor a 0.");
-      return;
-    }
-    if (requiereTC && !(Number(form.tipo_cambio) > 0)) {
-      setError("Registra el tipo de cambio que aplicó el banco (obligatorio en moneda distinta de MXN).");
-      return;
-    }
-    try {
-      await api.registrarTrfMovimiento({
-        tipo: form.tipo,
-        importe: Number(form.importe),
-        moneda: monedaFinal,
-        ...(requiereTC || Number(form.tipo_cambio) > 0 ? { tipo_cambio: Number(form.tipo_cambio) } : {}),
-        ...(form.operacion_id.trim() ? { operacion_id: Number(form.operacion_id) } : {}),
-        ...(form.notas.trim() ? { notas: form.notas.trim() } : {}),
-      });
-      setMensaje(
-        `${form.tipo === "ingreso" ? "Ingreso" : "Retiro"} registrado en el resguardo de TRF: ${
-          form.importe
-        } ${monedaFinal}${requiereTC ? ` (tipo de cambio ${form.tipo_cambio})` : ""}.`
-      );
-      setForm({ tipo: form.tipo, importe: "", moneda: form.moneda, monedaLibre: "", tipo_cambio: "", operacion_id: "", notas: "" });
-      cargar();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-
-  const texto = filtro.trim().toLowerCase();
-  const movimientos = (detalle?.movimientos ?? []).filter(
-    (m) =>
-      !texto ||
-      m.moneda.toLowerCase().includes(texto) ||
-      m.tipo.includes(texto) ||
-      (m.folio ?? "").toLowerCase().includes(texto) ||
-      m.notas.toLowerCase().includes(texto) ||
-      m.creador.toLowerCase().includes(texto)
-  );
-
-  return (
-    <>
-      <h2>Resguardo de TRF (la empresa)</h2>
-      <p style={{ color: "var(--tenue)", fontSize: "0.88rem", maxWidth: 900 }}>
-        Ledger de ingresos y retiros de la empresa en la moneda en que ocurren. Los movimientos en
-        moneda distinta de MXN guardan el <strong>tipo de cambio que aplicó el banco</strong> en la
-        operación, de modo que el resguardo cuadre contra pesos (equivalente = importe × tipo de
-        cambio). El saldo nunca se guarda: es la suma de sus movimientos. Los movimientos automáticos
-        se aplican <strong>AL AUTORIZARSE</strong> la operación (retiro del pago especial con origen
-        TRF e ingreso de la comisión TRF de los flujos en MXN); si la operación autorizada se cancela,
-        se reversan solos.
-      </p>
-      {error && <div className="error">{error}</div>}
-      {mensaje && <div className="exito-msg">{mensaje}</div>}
-
-      <div className="rejilla" style={{ maxWidth: 900 }}>
-        {(detalle?.saldos ?? []).map((s) => (
-          <div key={s.moneda} className="panel" style={{ margin: 0 }}>
-            <h3 style={{ marginTop: 0 }}>
-              {s.moneda}
-              {s.moneda !== "MXN" && <small style={{ color: "var(--tenue)", fontWeight: 400 }}> (con TC registrado)</small>}
-            </h3>
-            <p style={{ fontSize: "1.25rem", fontWeight: 700, margin: "0.2rem 0" }}>
-              {s.saldo.toLocaleString("es-MX", { minimumFractionDigits: 2 })} {s.moneda}
-            </p>
-            <p style={{ color: "var(--tenue)", fontSize: "0.85rem", margin: 0 }}>
-              Ingresos {s.ingresos.toLocaleString("es-MX", { minimumFractionDigits: 2 })} · Retiros{" "}
-              {s.retiros.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
-            </p>
-            <p style={{ fontSize: "0.88rem", margin: "0.3rem 0 0" }}>
-              Equivalente: <strong>${s.equivalente_mxn.toLocaleString("es-MX", { minimumFractionDigits: 2 })} MXN</strong>
-            </p>
-          </div>
-        ))}
-        {detalle && detalle.saldos.length === 0 && (
-          <div className="panel" style={{ margin: 0 }}>
-            <p style={{ margin: 0, color: "var(--tenue)" }}>Sin movimientos todavía.</p>
-          </div>
-        )}
-      </div>
-      {detalle && detalle.saldos.length > 0 && (
-        <p style={{ fontWeight: 600 }}>
-          Equivalente total del resguardo: ${detalle.equivalente_total_mxn.toLocaleString("es-MX", { minimumFractionDigits: 2 })} MXN
-        </p>
-      )}
-
-      {puedeRegistrar && (
-        <form className="panel" onSubmit={registrar} style={{ maxWidth: 760 }}>
-          <h3 style={{ marginTop: 0 }}>Registrar ingreso / retiro (correcciones)</h3>
-          <div className="rejilla">
-            <div>
-              <label>Tipo de movimiento</label>
-              <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value as "ingreso" | "retiro" })}>
-                <option value="ingreso">Ingreso (suma al resguardo)</option>
-                <option value="retiro">Retiro (resta del resguardo)</option>
-              </select>
-              <small style={{ display: "block", color: "var(--tenue)", fontSize: "0.8rem" }}>
-                Los movimientos normales nacen de OPERACIONES (pago especial desde TRF, comisión TRF) y
-                se aplican al autorizarse; usa este formulario sólo para correcciones.
-              </small>
-            </div>
-            <div>
-              <label>Moneda</label>
-              <select
-                value={form.moneda}
-                onChange={(e) => setForm({ ...form, moneda: e.target.value, monedaLibre: "" })}
-              >
-                <option value="MXN">MXN — Peso mexicano</option>
-                <option value="USD">USD — Dólar americano</option>
-                {MONEDAS_COMUNES.map((m) => (
-                  <option key={m.codigo} value={m.codigo}>
-                    {m.codigo} — {m.nombre}
-                  </option>
-                ))}
-                <option value="otra">Otra moneda… (especificar)</option>
-              </select>
-            </div>
-            {form.moneda === "otra" && (
-              <div>
-                <label>Especifica la moneda (código de 3 letras)</label>
-                <input
-                  value={form.monedaLibre}
-                  onChange={(e) => setForm({ ...form, monedaLibre: e.target.value.toUpperCase() })}
-                  maxLength={3}
-                  placeholder="SEK, NZD, …"
-                  style={{ textTransform: "uppercase" }}
-                />
-              </div>
-            )}
-            <div>
-              <label>Importe</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                value={form.importe}
-                onChange={(e) => setForm({ ...form, importe: e.target.value })}
-                required
-              />
-            </div>
-            <div>
-              <label>
-                Tipo de cambio del banco{requiereTC ? " (obligatorio)" : " (opcional, informativo)"}
-              </label>
-              <input
-                type="number"
-                step="0.0001"
-                min={requiereTC ? "0.0001" : undefined}
-                value={form.tipo_cambio}
-                onChange={(e) => setForm({ ...form, tipo_cambio: e.target.value })}
-                required={requiereTC}
-                placeholder={requiereTC ? "pesos por unidad de moneda" : "—"}
-              />
-            </div>
-            <div>
-              <label>Operación ligada (ID, opcional)</label>
-              <input
-                type="number"
-                min="1"
-                value={form.operacion_id}
-                onChange={(e) => setForm({ ...form, operacion_id: e.target.value })}
-                placeholder="ej. 42"
-              />
-            </div>
-            <div>
-              <label>Notas (opcional)</label>
-              <input
-                value={form.notas}
-                onChange={(e) => setForm({ ...form, notas: e.target.value })}
-                placeholder="banco, referencia, motivo…"
-              />
-            </div>
-          </div>
-          {requiereTC && Number(form.tipo_cambio) > 0 && Number(form.importe) > 0 && (
-            <p style={{ color: "var(--tenue)", fontSize: "0.87rem" }}>
-              Equivalente estimado: <strong>${fmt(r2(Number(form.importe) * Number(form.tipo_cambio)))} MXN</strong>
-            </p>
-          )}
-          <button className="btn">Registrar movimiento</button>
-        </form>
-      )}
-
-      <h3>Movimientos del resguardo</h3>
-      <div className="barra">
-        <input
-          placeholder="Filtrar por moneda, tipo, folio, notas o quien registró…"
-          value={filtro}
-          onChange={(e) => setFiltro(e.target.value)}
-          style={{ maxWidth: 380, marginBottom: 0 }}
-        />
-      </div>
-      <div className="panel">
-        <table>
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Tipo</th>
-              <th style={{ textAlign: "right" }}>Importe</th>
-              <th>Moneda</th>
-              <th style={{ textAlign: "right" }}>Tipo de cambio</th>
-              <th style={{ textAlign: "right" }}>Equivalente MXN</th>
-              <th>Operación</th>
-              <th>Notas</th>
-              <th>Registró</th>
-            </tr>
-          </thead>
-          <tbody>
-            {movimientos.map((m) => (
-              <tr key={m.id}>
-                <td>{m.creado_en}</td>
-                <td>
-                  <strong style={{ color: m.tipo === "ingreso" ? "var(--exito, #2e7d32)" : "var(--peligro, #c62828)" }}>
-                    {m.tipo === "ingreso" ? "+ Ingreso" : "− Retiro"}
-                  </strong>
-                </td>
-                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmt(m.importe)}</td>
-                <td>{m.moneda}</td>
-                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  {m.moneda === "MXN" ? <span style={{ color: "var(--tenue)" }}>—</span> : fmt(m.tipo_cambio ?? 0)}
-                </td>
-                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>${fmt(m.equivalente_mxn)}</td>
-                <td>{m.folio ? `${m.folio}` : m.operacion_id ? `#${m.operacion_id}` : "—"}</td>
-                <td>{m.notas || "—"}</td>
-                <td>{m.creador}</td>
-              </tr>
-            ))}
-            {movimientos.length === 0 && (
-              <tr>
-                <td colSpan={9} className="vacio">
-                  {detalle && detalle.movimientos.length > 0
-                    ? "Ningún movimiento coincide con el filtro."
-                    : "Sin movimientos registrados."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-}
 
 function VistaValidacion({ usuario }: { usuario: Usuario }) {
   const esAdmin = usuario.rol === "admin_validacion";
@@ -8476,5 +8227,1073 @@ function PanelBrokersResguardos({
         </form>
       )}
     </div>
+  );
+}
+
+/* ================= Sección RESGUARDOS (unificada) ========================= */
+/* Sustituye al antiguo apartado 'Resguardo TRF': aquí están TODOS los
+ * resguardos (uno por cliente + el de la empresa/TRF). Cualquiera con la
+ * sección puede ver el listado y los movimientos DEL MES; sólo Tesorería,
+ * Auditoría y Dirección (más el admin) pueden abrir el historial completo. */
+
+const ROLES_HISTORIAL_RESGUARDOS = ["admin", "admin_tesoreria", "tesoreria", "auditoria", "direccion"];
+
+function VistaResguardos({ usuario }: { usuario: Usuario }) {
+  const conHistorial = ROLES_HISTORIAL_RESGUARDOS.includes(usuario.rol);
+  const [lista, setLista] = useState<ResguardoLista | null>(null);
+  const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+  // Cliente seleccionado + mes consultado (los roles sin historial ven el mes
+  // en curso y el API se los fuerza igual).
+  const [sel, setSel] = useState<number | null>(null);
+  const [mes, setMes] = useState(new Date().toISOString().slice(0, 7));
+  const [todoHistorial, setTodoHistorial] = useState(false);
+  const [detalle, setDetalle] = useState<(ResguardoMesDetalle & ResguardoDetalle) | null>(null);
+  const [cargando, setCargando] = useState(false);
+  // Resguardo de la empresa (TRF): tarjeta resumen + ledger opcional.
+  const [verTrf, setVerTrf] = useState(false);
+  const [trf, setTrf] = useState<TrfResguardoDetalle | null>(null);
+
+  useEffect(() => {
+    api
+      .resguardos()
+      .then(setLista)
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const abrirCliente = (clienteId: number, opts?: { mes?: string; historial?: boolean }) => {
+    setError("");
+    setSel(clienteId);
+    setVerTrf(false);
+    setTrf(null);
+    setCargando(true);
+    const usarHistorial = (opts?.historial ?? todoHistorial) && conHistorial;
+    const mesPedido = opts?.mes ?? mes;
+    const pedir = usarHistorial ? api.resguardoMes(clienteId) : api.resguardoMes(clienteId, mesPedido);
+    pedir
+      .then((d) => setDetalle(d as ResguardoMesDetalle & ResguardoDetalle))
+      .catch((err: Error) => {
+        setError(err.message);
+        setDetalle(null);
+      })
+      .finally(() => setCargando(false));
+  };
+
+  const abrirTrf = () => {
+    setSel(null);
+    setDetalle(null);
+    setVerTrf((v) => !v);
+    if (!trf) {
+      api
+        .trfResguardo()
+        .then(setTrf)
+        .catch((err: Error) => setError(err.message));
+    }
+  };
+
+  const texto = q.trim().toLowerCase();
+  const resguardos = (lista?.resguardos ?? []).filter(
+    (r) => !texto || r.cliente.toLowerCase().includes(texto)
+  );
+
+  return (
+    <>
+      <h2>Resguardos</h2>
+      <p style={{ color: "var(--tenue)", fontSize: "0.88rem", maxWidth: 940 }}>
+        Listado de todos los resguardos: uno por cliente con su saldo (la suma de sus movimientos,
+        nunca se guarda) y el resguardo de la empresa (TRF). Selecciona uno para ver sus movimientos{" "}
+        {conHistorial
+          ? "del mes que elijas o el historial completo desde todos los tiempos."
+          : "del mes en curso. El historial completo sólo lo consulta Tesorería, Auditoría y Dirección."}
+      </p>
+      {error && <div className="error">{error}</div>}
+
+      {/* Resguardo de la empresa (TRF) */}
+      <div className="panel" style={{ maxWidth: 940 }}>
+        <div className="barra" style={{ justifyContent: "space-between", marginBottom: 0 }}>
+          <h3 style={{ margin: 0 }}>Resguardo de la empresa (TRF)</h3>
+          <button className="btn secundario" onClick={abrirTrf}>
+            {verTrf ? "Ocultar movimientos" : "Ver movimientos"}
+          </button>
+        </div>
+        <div className="rejilla" style={{ marginTop: "0.6rem" }}>
+          {(lista?.trf.saldos ?? []).length === 0 && (
+            <p style={{ margin: 0, color: "var(--tenue)" }}>Sin movimientos todavía.</p>
+          )}
+          {(lista?.trf.saldos ?? []).map((s) => (
+            <div key={s.moneda}>
+              <p style={{ margin: 0, fontWeight: 700 }}>
+                {s.moneda}: {s.saldo.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+              </p>
+              <p style={{ margin: 0, color: "var(--tenue)", fontSize: "0.85rem" }}>
+                Equivalente: ${s.equivalente_mxn.toLocaleString("es-MX", { minimumFractionDigits: 2 })} MXN
+              </p>
+            </div>
+          ))}
+          {(lista?.trf.saldos ?? []).length > 0 && (
+            <div>
+              <p style={{ margin: 0, fontWeight: 700 }}>
+                Total en MXN: ${lista!.trf.equivalente_total_mxn.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+              </p>
+            </div>
+          )}
+        </div>
+        {verTrf && trf && (
+          <div style={{ overflowX: "auto", marginTop: "0.6rem" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Tipo</th>
+                  <th style={{ textAlign: "right" }}>Importe</th>
+                  <th>Moneda</th>
+                  <th style={{ textAlign: "right" }}>Tipo de cambio</th>
+                  <th style={{ textAlign: "right" }}>Equivalente MXN</th>
+                  <th>Folio</th>
+                  <th>Notas</th>
+                  <th>Registró</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trf.movimientos.map((m) => (
+                  <tr key={m.id}>
+                    <td>{m.creado_en}</td>
+                    <td>
+                      <strong style={{ color: m.tipo === "ingreso" ? "var(--exito, #2e7d32)" : "var(--peligro, #c62828)" }}>
+                        {m.tipo === "ingreso" ? "+ Ingreso" : "− Retiro"}
+                      </strong>
+                    </td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmt(m.importe)}</td>
+                    <td>{m.moneda}</td>
+                    <td style={{ textAlign: "right" }}>{m.moneda === "MXN" ? "—" : fmt(m.tipo_cambio ?? 0)}</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>${fmt(m.equivalente_mxn)}</td>
+                    <td>{m.folio ?? (m.operacion_id ? `#${m.operacion_id}` : "—")}</td>
+                    <td>{m.notas || "—"}</td>
+                    <td>{m.creador}</td>
+                  </tr>
+                ))}
+                {trf.movimientos.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="vacio">
+                      Sin movimientos registrados.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Listado de resguardos por cliente */}
+      <div className="barra">
+        <input
+          placeholder="Buscar cliente…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          style={{ maxWidth: 320 }}
+        />
+        {conHistorial && (
+          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem" }}>
+            <input
+              type="checkbox"
+              checked={todoHistorial}
+              onChange={(e) => {
+                const hist = e.target.checked;
+                setTodoHistorial(hist);
+                if (sel) abrirCliente(sel, { historial: hist });
+              }}
+            />
+            Historial completo (todos los tiempos)
+          </label>
+        )}
+        {!conHistorial && sel && (
+          <small style={{ color: "var(--tenue)" }}>Viendo sólo el mes en curso ({mes})</small>
+        )}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente / resguardo</th>
+              <th style={{ textAlign: "right" }}>Saldo</th>
+              <th style={{ textAlign: "right" }}>Movimientos</th>
+              <th>Último movimiento</th>
+              <th>Estatus</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {resguardos.map((r) => (
+              <tr key={r.cliente_id} className={sel === r.cliente_id ? "fila-sel" : ""}>
+                <td>{r.cliente}</td>
+                <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>${fmt(r.saldo)}</td>
+                <td style={{ textAlign: "right" }}>{r.movimientos_count}</td>
+                <td>{r.ultimo_movimiento ? r.ultimo_movimiento.slice(0, 10) : "—"}</td>
+                <td>{r.activo ? "Activo" : "Inactivo"}</td>
+                <td>
+                  <button className="btn secundario" onClick={() => abrirCliente(r.cliente_id)}>
+                    Ver movimientos
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {resguardos.length === 0 && (
+              <tr>
+                <td colSpan={6} className="vacio">
+                  {lista ? "Sin clientes con resguardo." : "Cargando…"}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Movimientos del resguardo seleccionado */}
+      {sel && detalle && (
+        <div className="panel" style={{ maxWidth: 1100 }}>
+          <h3 style={{ marginTop: 0 }}>
+            Movimientos {detalle.mes ? `del mes ${detalle.mes}` : "— historial completo"} — {detalle.cliente.nombre}
+          </h3>
+          {detalle.mes && (
+            <>
+              {conHistorial && (
+                <div className="barra" style={{ marginBottom: "0.5rem" }}>
+                  <label style={{ fontSize: "0.85rem" }}>
+                    Mes:{" "}
+                    <input
+                      type="month"
+                      value={mes}
+                      onChange={(e) => {
+                        const nuevo = e.target.value;
+                        setMes(nuevo);
+                        if (nuevo && !todoHistorial) abrirCliente(sel, { mes: nuevo });
+                      }}
+                      disabled={todoHistorial}
+                    />
+                  </label>
+                  <button className="btn secundario" onClick={() => abrirCliente(sel)}>
+                    Actualizar
+                  </button>
+                </div>
+              )}
+              <p style={{ fontWeight: 600, margin: "0.2rem 0" }}>
+                Saldo de apertura del mes: ${fmt((detalle as ResguardoMesDetalle).saldo_anterior ?? 0)}
+              </p>
+            </>
+          )}
+          <p style={{ fontWeight: 600, margin: "0.2rem 0" }}>
+            Saldo total del resguardo: ${fmt(detalle.saldo)}
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Tipo</th>
+                  <th style={{ textAlign: "right" }}>Importe</th>
+                  <th style={{ textAlign: "right" }}>Saldo acumulado</th>
+                  <th>Folio operación</th>
+                  <th>Cuenta</th>
+                  <th>Comprobante</th>
+                  <th>Observaciones</th>
+                  <th>Registró</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  let acumulado = detalle.mes
+                    ? (detalle as ResguardoMesDetalle).saldo_anterior ?? 0
+                    : 0;
+                  return detalle.movimientos.map((m) => {
+                    acumulado += m.tipo === "cargo" ? -m.importe : m.importe;
+                    return (
+                      <tr key={m.id}>
+                        <td>{m.creado_en.slice(0, 10)}</td>
+                        <td>
+                          {m.tipo === "cargo" ? (
+                            <strong style={{ color: "var(--peligro, #c62828)" }}>− Cargo</strong>
+                          ) : (
+                            <strong style={{ color: "var(--exito, #2e7d32)" }}>
+                              + {m.tipo === "financiamiento" ? "Financiamiento" : "Depósito"}
+                            </strong>
+                          )}
+                        </td>
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmt(m.importe)}</td>
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>
+                          {detalle.mes ? `$${fmt(acumulado)}` : "—"}
+                        </td>
+                        <td>{m.folio ?? "—"}</td>
+                        <td>{m.cuenta ?? "—"}</td>
+                        <td>{m.comprobante || "—"}</td>
+                        <td>{m.observaciones || "—"}</td>
+                        <td>{m.registrado_por}</td>
+                      </tr>
+                    );
+                  });
+                })()}
+                {detalle.movimientos.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="vacio">
+                      {detalle.mes
+                        ? "Sin movimientos en este mes."
+                        : cargando
+                        ? "Cargando…"
+                        : "Sin movimientos registrados."}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {!conHistorial && (
+            <small style={{ color: "var(--tenue)" }}>
+              Tu rol consulta sólo el mes en curso; el historial completo queda para Tesorería,
+              Auditoría y Dirección.
+            </small>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ================= Contaduría: solicitudes de TIMBRADO ==================== */
+/* Contaduría recibe aquí las operaciones que requieren facturación
+ * (timbrar = sí). Al abrir una, ve el detalle de la operación en sólo
+ * lectura: sin acciones, sin edición, sin pagos. */
+
+function VistaTimbrado({ usuario }: { usuario: Usuario }) {
+  const [solicitudes, setSolicitudes] = useState<SolicitudTimbrado[]>([]);
+  const [porEstado, setPorEstado] = useState<Record<string, number>>({});
+  const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+  const [fEstado, setFEstado] = useState("");
+  const [sel, setSel] = useState<number | null>(null);
+  const [detalle, setDetalle] = useState<DetalleOperacion | null>(null);
+
+  const cargar = () => {
+    api
+      .solicitudesTimbrado()
+      .then((r) => {
+        setSolicitudes(r.solicitudes);
+        setPorEstado(r.por_estado);
+      })
+      .catch((err: Error) => setError(err.message));
+  };
+
+  useEffect(() => {
+    cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const abrir = (id: number) => {
+    setSel(id);
+    setError("");
+    api
+      .detalle(id)
+      .then(setDetalle)
+      .catch((err: Error) => {
+        setError(err.message);
+        setDetalle(null);
+      });
+  };
+
+  const texto = q.trim().toLowerCase();
+  const filas = solicitudes.filter(
+    (s) =>
+      (!fEstado || s.estado === fEstado) &&
+      (!texto ||
+        s.folio.toLowerCase().includes(texto) ||
+        (s.cliente ?? "").toLowerCase().includes(texto) ||
+        (s.tipo_operacion ?? "").toLowerCase().includes(texto) ||
+        s.capturado_por.toLowerCase().includes(texto))
+  );
+
+  return (
+    <>
+      <h2>Timbrado — solicitudes de facturación</h2>
+      <p style={{ color: "var(--tenue)", fontSize: "0.88rem", maxWidth: 940 }}>
+        Operaciones capturadas con facturación requerida (timbrar = sí). Contaduría las recibe aquí;
+        da clic en una para ver el detalle de la operación (sólo lectura).
+      </p>
+      {error && <div className="error">{error}</div>}
+
+      <div className="rejilla" style={{ maxWidth: 720 }}>
+        <div className="panel" style={{ margin: 0 }}>
+          <h3 style={{ marginTop: 0 }}>Resumen</h3>
+          <p style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700 }}>{solicitudes.length} solicitudes</p>
+          <p style={{ margin: "0.2rem 0 0", color: "var(--tenue)", fontSize: "0.85rem" }}>
+            {Object.entries(porEstado)
+              .map(([e, n]) => `${ETIQUETAS_ESTADO[e as Estado] ?? e}: ${n}`)
+              .join(" · ") || "Sin solicitudes todavía."}
+          </p>
+        </div>
+      </div>
+
+      <div className="barra">
+        <input
+          placeholder="Buscar folio, cliente, tipo…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          style={{ maxWidth: 320 }}
+        />
+        <select value={fEstado} onChange={(e) => setFEstado(e.target.value)} style={{ maxWidth: 200 }}>
+          <option value="">Todos los estados</option>
+          {Object.keys(porEstado).map((e) => (
+            <option key={e} value={e}>
+              {ETIQUETAS_ESTADO[e as Estado] ?? e}
+            </option>
+          ))}
+        </select>
+        <button className="btn secundario" onClick={cargar}>
+          Actualizar
+        </button>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Folio</th>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Tipo</th>
+              <th style={{ textAlign: "right" }}>Monto</th>
+              <th>Estado</th>
+              <th style={{ textAlign: "right" }}>Dispersión</th>
+              <th>Capturó</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map((s) => (
+              <tr key={s.id} className={sel === s.id ? "fila-sel" : ""}>
+                <td>
+                  <strong>{s.folio}</strong>
+                </td>
+                <td>{s.fecha_operacion}</td>
+                <td>{s.cliente ?? "—"}</td>
+                <td>{s.tipo_operacion || s.tipo}</td>
+                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                  {s.moneda} {fmt(s.monto)}
+                </td>
+                <td>{ETIQUETAS_ESTADO[s.estado as Estado] ?? s.estado}</td>
+                <td style={{ textAlign: "right" }}>{s.dispersiones_count}</td>
+                <td>{s.capturado_por}</td>
+                <td>
+                  <button className="btn secundario" onClick={() => abrir(s.id)}>
+                    Ver detalle
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {filas.length === 0 && (
+              <tr>
+                <td colSpan={9} className="vacio">
+                  {solicitudes.length === 0
+                    ? "Sin solicitudes de timbrado: aparecen cuando una operación se captura con facturación (timbrar = sí)."
+                    : "Ninguna solicitud coincide con el filtro."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {sel && detalle && (
+        <div className="panel" style={{ maxWidth: 1100 }}>
+          <h3 style={{ marginTop: 0 }}>
+            {detalle.operacion.folio} — detalle de la operación (sólo lectura)
+          </h3>
+          <div className="rejilla">
+            <div>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Fecha:</strong> {detalle.operacion.fecha_operacion}
+              </p>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Estado:</strong> {ETIQUETAS_ESTADO[detalle.operacion.estado] ?? detalle.operacion.estado}
+              </p>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Cliente:</strong> {detalle.operacion.cliente ?? "—"}
+              </p>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Pagador:</strong> {detalle.operacion.pagador || "—"}
+              </p>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Tipo:</strong> {detalle.operacion.tipo_operacion || detalle.operacion.tipo}
+              </p>
+            </div>
+            <div>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Monto:</strong> {detalle.operacion.moneda} {fmt(detalle.operacion.monto)}
+              </p>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Comisión:</strong> {detalle.operacion.comision_pct ?? 0}%
+              </p>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Facturación (timbrar):</strong> {detalle.operacion.timbrar ? "Sí" : "No"}
+              </p>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Concepto:</strong> {detalle.operacion.concepto || "—"}
+              </p>
+              <p style={{ margin: "0.2rem 0" }}>
+                <strong>Observaciones:</strong> {detalle.operacion.observaciones || "—"}
+              </p>
+            </div>
+          </div>
+
+          <h4 style={{ marginBottom: "0.2rem" }}>
+            Dispersión ({detalle.dispersiones.length}) — por dispersar{" "}
+            {fmt(detalle.totales_pago.total_por_dispersar)} · dispersado {fmt(detalle.totales_pago.total_dispersado)}
+          </h4>
+          <div style={{ overflowX: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Beneficiario</th>
+                  <th>Razón social</th>
+                  <th>Banco</th>
+                  <th style={{ textAlign: "right" }}>Importe</th>
+                  <th>RFC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detalle.dispersiones.map((d) => (
+                  <tr key={d.id}>
+                    <td>{d.orden}</td>
+                    <td>{d.beneficiario}</td>
+                    <td>{d.razon_social || "—"}</td>
+                    <td>{d.banco}</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmt(d.importe)}</td>
+                    <td>{(d as Dispersion & { rfc?: string }).rfc || "—"}</td>
+                  </tr>
+                ))}
+                {detalle.dispersiones.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="vacio">
+                      Sin líneas de dispersión.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {detalle.pagos.length > 0 && (
+            <>
+              <h4 style={{ marginBottom: "0.2rem" }}>Pagos registrados ({detalle.pagos.length})</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Medio</th>
+                    <th style={{ textAlign: "right" }}>Monto</th>
+                    <th>Comprobante</th>
+                    <th>Pagó</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detalle.pagos.map((p) => (
+                    <tr key={p.id}>
+                      <td>{p.fecha_pago}</td>
+                      <td>{p.medio}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {p.moneda} {fmt(p.monto)}
+                      </td>
+                      <td>{p.comprobante || "—"}</td>
+                      <td>{(p as Pago & { pagador?: string }).pagador ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          <small style={{ color: "var(--tenue)" }}>
+            Vista de sólo lectura para Contaduría — para cualquier cambio, la operación sigue su
+            proceso normal con Operaciones, Calidad y Tesorería.
+          </small>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ================= Estructuras de cuentas (Contaduría) ==================== */
+/* Replica el formato 'ESTRUCTURAS EJERCICIO 2026' que comparte Contaduría:
+ * una fila por razón social (FRENTE, RB, FLUJOS, SOFOM) con giro, núcleo de
+ * frentes, importe máximo para bajar por mes, bancos, trámites y el estatus.
+ * Va ligada a las cuentas de Tesorería (cuenta_id). Contaduría edita; el
+ * Administrador de Tesorería consulta, edita y activa/desactiva. */
+
+const vaciaEstructura = (): Record<string, unknown> => ({
+  giro: "",
+  nucleo: "",
+  razon_social: "",
+  tipo: "RB",
+  empresa: "",
+  importe_maximo: "",
+  observaciones: "",
+  estatus_operacion: true,
+  total_cuentas: 0,
+  bancos: Object.fromEntries(BANCOS_ESTRUCTURA.map((b) => [b, false])),
+  extras: Object.fromEntries(EXTRAS_ESTRUCTURA.map((e) => [e, false])),
+  observaciones2: "",
+  cuenta_id: "",
+});
+
+function VistaEstructuras({ usuario }: { usuario: Usuario }) {
+  // Contaduría hace y edita la estructura; el Administrador de Tesorería la
+  // consulta, edita y maneja el estatus (activa/inactiva). El admin todo.
+  const puedeCrear = usuario.rol === "contaduria" || usuario.rol === "admin";
+  const puedeEditar = usuario.rol === "contaduria" || usuario.rol === "admin_tesoreria" || usuario.rol === "admin";
+  const puedeEstatus = usuario.rol === "admin_tesoreria" || usuario.rol === "admin";
+  const [estructuras, setEstructuras] = useState<Estructura[]>([]);
+  const [cuentas, setCuentas] = useState<Array<{ id: number; nombre: string; banco: string }>>([]);
+  const [error, setError] = useState("");
+  const [mensaje, setMensaje] = useState("");
+  const [fQ, setFQ] = useState("");
+  const [fTipo, setFTipo] = useState("");
+  const [fEstatus, setFEstatus] = useState("");
+  const [form, setForm] = useState<Record<string, unknown> | null>(null); // null = cerrado
+  const [editId, setEditId] = useState<number | null>(null);
+  const [verLayout, setVerLayout] = useState(false);
+  const [cargandoLayout, setCargandoLayout] = useState(false);
+
+  const cargar = () => {
+    api
+      .estructuras({
+        q: fQ || undefined,
+        tipo: fTipo || undefined,
+        estatus: fEstatus || undefined,
+      })
+      .then((r) => setEstructuras(r.estructuras))
+      .catch((err: Error) => setError(err.message));
+  };
+
+  useEffect(() => {
+    cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fQ, fTipo, fEstatus]);
+
+  useEffect(() => {
+    api
+      .cuentasNombres()
+      .then((r) => setCuentas(r.cuentas))
+      .catch(() => setCuentas([]));
+  }, []);
+
+  const guardar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form) return;
+    setError("");
+    setMensaje("");
+    const datos = {
+      ...form,
+      estatus_operacion: form.estatus_operacion ? 1 : 0,
+      cuenta_id: form.cuenta_id ? Number(form.cuenta_id) : null,
+      total_cuentas: Number(form.total_cuentas) || 0,
+      bancos: Object.fromEntries(
+        Object.entries(form.bancos as Record<string, boolean>).map(([k, v]) => [k, v ? 1 : 0])
+      ),
+      extras: Object.fromEntries(
+        Object.entries(form.extras as Record<string, boolean>).map(([k, v]) => [k, v ? 1 : 0])
+      ),
+    };
+    try {
+      if (editId) {
+        await api.editarEstructura(editId, datos);
+        setMensaje(`Estructura '${String(form.razon_social)}' actualizada.`);
+      } else {
+        await api.crearEstructura(datos);
+        setMensaje(`Estructura '${String(form.razon_social)}' creada.`);
+      }
+      setForm(null);
+      setEditId(null);
+      cargar();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const cambiarEstatus = async (e: Estructura) => {
+    setError("");
+    setMensaje("");
+    try {
+      await api.estatusEstructura(e.id, e.estatus_operacion !== 1);
+      setMensaje(
+        `Estructura '${e.razon_social}' ${e.estatus_operacion === 1 ? "DESACTIVADA" : "ACTIVADA"}.`
+      );
+      cargar();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const cargarLayout = async (archivo: File) => {
+    setError("");
+    setMensaje("");
+    setCargandoLayout(true);
+    try {
+      const { filas, avisos } = await leerFilasEstructuras(archivo);
+      if (!filas.length) {
+        setError("No se reconoció ninguna fila válida del layout." + (avisos.length ? ` ${avisos.length} fila(s) con avisos.` : ""));
+        return;
+      }
+      const r = await api.cargarLayoutEstructuras(filas as unknown as Array<Record<string, unknown>>);
+      setMensaje(
+        `Layout cargado: ${r.creadas} creada(s), ${r.actualizadas} actualizada(s)` +
+          (r.errores.length ? `, ${r.errores.length} error(es): ${r.errores.slice(0, 3).join("; ")}` : "") +
+          (avisos.length ? ` · ${avisos.length} aviso(s)` : "")
+      );
+      cargar();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCargandoLayout(false);
+    }
+  };
+
+  return (
+    <>
+      <h2>Estructuras de cuentas</h2>
+      <p style={{ color: "var(--tenue)", fontSize: "0.88rem", maxWidth: 980 }}>
+        Catálogo del negocio (formato Ejercicio 2026): frentes y sus RB/flujos, con giro, núcleo,
+        importe máximo para bajar por mes, bancos y trámites. Cada estructura va ligada a su cuenta
+        de Tesorería; {puedeEstatus ? "desde aquí se ve cuáles están activas y se activan/desactivan." : "el estatus lo maneja el Administrador de Tesorería."}
+      </p>
+      {error && <div className="error">{error}</div>}
+      {mensaje && <div className="exito-msg">{mensaje}</div>}
+
+      <div className="barra">
+        <input
+          placeholder="Buscar razón social, giro, núcleo, empresa…"
+          value={fQ}
+          onChange={(e) => setFQ(e.target.value)}
+          style={{ maxWidth: 320 }}
+        />
+        <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} style={{ maxWidth: 160 }}>
+          <option value="">Todos los tipos</option>
+          <option value="FRENTE">Frente</option>
+          <option value="RB">RB</option>
+          <option value="FLUJOS">Flujos</option>
+          <option value="SOFOM">SOFOM</option>
+        </select>
+        <select value={fEstatus} onChange={(e) => setFEstatus(e.target.value)} style={{ maxWidth: 160 }}>
+          <option value="">Activas e inactivas</option>
+          <option value="1">Sólo activas</option>
+          <option value="0">Sólo inactivas</option>
+        </select>
+        {puedeCrear && (
+          <>
+            <button
+              className="btn"
+              onClick={() => {
+                setEditId(null);
+                setForm(vaciaEstructura());
+              }}
+            >
+              Nueva estructura
+            </button>
+            <button className="btn secundario" onClick={() => setVerLayout((v) => !v)}>
+              {verLayout ? "Cerrar layout" : "Cargar layout (Excel)"}
+            </button>
+          </>
+        )}
+      </div>
+
+      {verLayout && puedeCrear && (
+        <div className="panel" style={{ maxWidth: 760 }}>
+          <h3 style={{ marginTop: 0 }}>Cargar el Excel de estructuras</h3>
+          <p style={{ fontSize: "0.88rem", color: "var(--tenue)" }}>
+            Usa el mismo formato que comparte Contaduría (GIRO, NUCLEO DE FRENTES, RAZON SOCIAL,
+            TIPO, EMPRESA, IMPORTE MAXIMO…, bancos y trámites). Las filas que coincidan en razón
+            social + tipo se actualizan; las demás se crean.
+          </p>
+          <div className="barra">
+            <button className="btn secundario" onClick={() => void descargarPlantillaEstructuras()}>
+              Descargar plantilla
+            </button>
+            <label className="btn" style={{ cursor: "pointer" }}>
+              {cargandoLayout ? "Cargando…" : "Elegir archivo (.xlsx / .csv)"}
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv,.txt"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void cargarLayout(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+        </div>
+      )}
+
+      {form && (
+        <form className="panel" onSubmit={guardar} style={{ maxWidth: 980 }}>
+          <h3 style={{ marginTop: 0 }}>{editId ? "Editar estructura" : "Nueva estructura"}</h3>
+          <div className="rejilla">
+            <div>
+              <label>Razón social *</label>
+              <input
+                value={String(form.razon_social)}
+                onChange={(e) => setForm({ ...form, razon_social: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label>Tipo *</label>
+              <select value={String(form.tipo)} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+                <option value="FRENTE">FRENTE</option>
+                <option value="RB">RB</option>
+                <option value="FLUJOS">FLUJOS</option>
+                <option value="SOFOM">SOFOM</option>
+              </select>
+            </div>
+            <div>
+              <label>Giro</label>
+              <input value={String(form.giro)} onChange={(e) => setForm({ ...form, giro: e.target.value })} />
+            </div>
+            <div>
+              <label>Núcleo de frentes</label>
+              <input value={String(form.nucleo)} onChange={(e) => setForm({ ...form, nucleo: e.target.value })} />
+            </div>
+            <div>
+              <label>Empresa (frente al que pertenece)</label>
+              <input
+                list="empresas-estructura"
+                value={String(form.empresa)}
+                onChange={(e) => setForm({ ...form, empresa: e.target.value })}
+              />
+              <datalist id="empresas-estructura">
+                {estructuras
+                  .filter((x) => x.tipo === "FRENTE")
+                  .map((x) => (
+                    <option key={x.id} value={x.razon_social} />
+                  ))}
+              </datalist>
+            </div>
+            <div>
+              <label>Importe máximo para bajar por mes</label>
+              <input
+                value={String(form.importe_maximo)}
+                onChange={(e) => setForm({ ...form, importe_maximo: e.target.value })}
+                placeholder="de un 25 a un 30 % del flujo"
+              />
+            </div>
+            <div>
+              <label>Cuenta de Tesorería ligada</label>
+              <select value={String(form.cuenta_id)} onChange={(e) => setForm({ ...form, cuenta_id: e.target.value })}>
+                <option value="">— Sin ligar —</option>
+                {cuentas.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.nombre} ({c.banco})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Total de cuentas</label>
+              <input
+                type="number"
+                min={0}
+                value={String(form.total_cuentas)}
+                onChange={(e) => setForm({ ...form, total_cuentas: e.target.value })}
+              />
+            </div>
+            <div>
+              <label>Observaciones</label>
+              <input
+                value={String(form.observaciones)}
+                onChange={(e) => setForm({ ...form, observaciones: e.target.value })}
+              />
+            </div>
+            <div>
+              <label>Observaciones (trámites)</label>
+              <input
+                value={String(form.observaciones2)}
+                onChange={(e) => setForm({ ...form, observaciones2: e.target.value })}
+              />
+            </div>
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.estatus_operacion)}
+                  onChange={(e) => setForm({ ...form, estatus_operacion: e.target.checked })}
+                />
+                Estatus de operación (activa)
+              </label>
+            </div>
+          </div>
+
+          <h4 style={{ marginBottom: "0.2rem" }}>Bancos con cuenta</h4>
+          <div className="chips">
+            {BANCOS_ESTRUCTURA.map((b) => {
+              const activo = Boolean((form.bancos as Record<string, boolean>)[b]);
+              return (
+                <label key={b} className={`chip ${activo ? "chip-activo" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={activo}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        bancos: { ...(form.bancos as Record<string, boolean>), [b]: e.target.checked },
+                      })
+                    }
+                  />
+                  {b}
+                </label>
+              );
+            })}
+          </div>
+
+          <h4 style={{ marginBottom: "0.2rem" }}>Trámites y registros</h4>
+          <div className="chips">
+            {EXTRAS_ESTRUCTURA.map((x) => {
+              const activo = Boolean((form.extras as Record<string, boolean>)[x]);
+              return (
+                <label key={x} className={`chip ${activo ? "chip-activo" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={activo}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        extras: { ...(form.extras as Record<string, boolean>), [x]: e.target.checked },
+                      })
+                    }
+                  />
+                  {x}
+                </label>
+              );
+            })}
+          </div>
+
+          <div className="barra">
+            <button className="btn">Guardar estructura</button>
+            <button
+              type="button"
+              className="btn secundario"
+              onClick={() => {
+                setForm(null);
+                setEditId(null);
+              }}
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div style={{ overflowX: "auto" }}>
+        <table className="tabla-estructuras">
+          <thead>
+            <tr>
+              <th>Razón social</th>
+              <th>Tipo</th>
+              <th>Giro</th>
+              <th>Núcleo</th>
+              <th>Empresa</th>
+              <th>Importe máximo / mes</th>
+              <th style={{ textAlign: "right" }}>Ctas.</th>
+              <th>Bancos</th>
+              <th>Trámites</th>
+              <th>Cuenta ligada</th>
+              <th>Estatus</th>
+              {(puedeEditar || puedeEstatus) && <th></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {estructuras.map((e) => {
+              const bancosOn = Object.entries(e.bancos)
+                .filter(([, v]) => v === 1)
+                .map(([k]) => k);
+              const extrasOn = Object.entries(e.extras)
+                .filter(([, v]) => v === 1)
+                .map(([k]) => k);
+              return (
+                <tr key={e.id} className={e.estatus_operacion ? "" : "fila-inactiva"}>
+                  <td style={{ minWidth: 220 }}>
+                    <strong>{e.razon_social}</strong>
+                    {e.observaciones && <div style={{ color: "var(--tenue)", fontSize: "0.78rem" }}>{e.observaciones}</div>}
+                  </td>
+                  <td>
+                    <span className={`chip chip-${e.tipo.toLowerCase()}`}>{e.tipo}</span>
+                  </td>
+                  <td>{e.giro || "—"}</td>
+                  <td style={{ maxWidth: 180 }}>{e.nucleo || "—"}</td>
+                  <td style={{ maxWidth: 220 }}>{e.empresa || "—"}</td>
+                  <td style={{ maxWidth: 180 }}>{e.importe_maximo || "—"}</td>
+                  <td style={{ textAlign: "right" }}>{e.total_cuentas}</td>
+                  <td style={{ maxWidth: 200, fontSize: "0.78rem" }}>{bancosOn.join(", ") || "—"}</td>
+                  <td style={{ maxWidth: 200, fontSize: "0.78rem" }}>{extrasOn.join(", ") || "—"}</td>
+                  <td>{e.cuenta ?? "—"}</td>
+                  <td>
+                    <strong style={{ color: e.estatus_operacion ? "var(--exito, #2e7d32)" : "var(--peligro, #c62828)" }}>
+                      {e.estatus_operacion ? "Activa" : "Inactiva"}
+                    </strong>
+                  </td>
+                  {(puedeEditar || puedeEstatus) && (
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {puedeEditar && (
+                        <button
+                          className="btn secundario"
+                          onClick={() => {
+                            setEditId(e.id);
+                            setForm({
+                              ...vaciaEstructura(),
+                              ...e,
+                              estatus_operacion: e.estatus_operacion === 1,
+                              cuenta_id: e.cuenta_id ? String(e.cuenta_id) : "",
+                              total_cuentas: e.total_cuentas ?? 0,
+                              bancos: {
+                                ...Object.fromEntries(BANCOS_ESTRUCTURA.map((b) => [b, false])),
+                                ...Object.fromEntries(
+                                  Object.entries(e.bancos).map(([k, v]) => [k, v === 1])
+                                ),
+                              },
+                              extras: {
+                                ...Object.fromEntries(EXTRAS_ESTRUCTURA.map((x) => [x, false])),
+                                ...Object.fromEntries(
+                                  Object.entries(e.extras).map(([k, v]) => [k, v === 1])
+                                ),
+                              },
+                            });
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                        >
+                          Editar
+                        </button>
+                      )}{" "}
+                      {puedeEstatus && (
+                        <button className="btn secundario" onClick={() => void cambiarEstatus(e)}>
+                          {e.estatus_operacion ? "Desactivar" : "Activar"}
+                        </button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+            {estructuras.length === 0 && (
+              <tr>
+                <td colSpan={puedeEditar || puedeEstatus ? 12 : 11} className="vacio">
+                  Sin estructuras que coincidan con el filtro.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <small style={{ color: "var(--tenue)" }}>
+        {estructuras.length} estructura(s) listadas. Las estructuras ACTIVAS son las que alimentan
+        el catálogo que ve Operaciones al capturar.
+      </small>
+    </>
   );
 }

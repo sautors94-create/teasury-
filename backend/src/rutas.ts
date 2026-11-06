@@ -561,6 +561,7 @@ export function crearRouter(db: Database): Router {
     "fondeador",
     "confirmador",
     "admin_operaciones",
+    "admin_validacion",
     "direccion",
     "auditoria",
   ] as const;
@@ -3393,6 +3394,17 @@ export function crearRouter(db: Database): Router {
   // selectores de pagadoras. Fase 13: cada fila trae `visible_operador` (1/0) —
   // la UI oculta del listado de pagadoras las que Tesorería marcó como no
   // visibles para operadores; sigue siendo una cuenta válida para depósitos.
+  // Nombres de las cuentas de Tesorería (SIN números ni CLABE) para ligar una
+  // estructura a su cuenta: Contaduría la necesita; no puede consultar el
+  // catálogo completo porque ahí viven los datos bancarios. Va ANTES de
+  // /cuentas/:id para que Express no la capture como parámetro.
+  r.get("/cuentas/nombres", autenticar, requiereRol("contaduria", "admin_tesoreria", "admin"), (_req, res) => {
+    const filas = db
+      .prepare("SELECT id, nombre, banco, tipo FROM cuentas WHERE activa = 1 ORDER BY nombre")
+      .all();
+    res.json({ cuentas: filas });
+  });
+
   r.get("/cuentas/catalogo", autenticar, (_req, res) => {
     const filas = db
       .prepare(
@@ -4708,10 +4720,25 @@ export function crearRouter(db: Database): Router {
   // El saldo NO se guarda nunca: es la suma de sus movimientos.
   //   deposito (+): lo valida Tesorería al confirmar el recurso del cliente.
   //   cargo (−): se genera solo al ejecutar el pago de la operación.
+  // Sección Resguardos (sección unificada que sustituye al apartado 'Resguardo
+  // TRF'): acepta ?mes=YYYY-MM para devolver SOLO el mes pedido (con el saldo
+  // de apertura del mes). Los roles sin historial completo (sólo Tesorería,
+  // Auditoría y Dirección lo ven) quedan SIEMRE limitados al mes en curso.
+  const ROLES_HISTORIAL_COMPLETO = ["admin", "admin_tesoreria", "tesoreria", "auditoria", "direccion"] as const;
   r.get(
     "/clientes/:id/resguardo",
     autenticar,
-    requiereRol("admin_operaciones", "operacion", "validador_tesoreria", "admin_tesoreria", "tesoreria", "direccion", "auditoria"),
+    requiereRol(
+      "admin_operaciones",
+      "operacion",
+      "validador_tesoreria",
+      "admin_tesoreria",
+      "admin_validacion",
+      "tesoreria",
+      "direccion",
+      "auditoria",
+      "admin"
+    ),
     (req, res) => {
       const id = Number(req.params.id);
       const cliente = db.prepare("SELECT id, nombre, activo FROM clientes WHERE id = ?").get(id) as
@@ -4726,6 +4753,18 @@ export function crearRouter(db: Database): Router {
         res.status(403).json({ error: "Cliente fuera de tu alcance (no asignado ni en cobertura)" });
         return;
       }
+      // Mes solicitado (sección Resguardos): los roles con historial completo
+      // pueden pedir cualquier mes u omitirlo (todo el historial); el resto
+      // sólo puede ver el mes EN CURSO.
+      const conHistorial = (ROLES_HISTORIAL_COMPLETO as readonly string[]).includes(req.usuario!.rol);
+      let mes = typeof req.query.mes === "string" ? req.query.mes : "";
+      if (mes && !/^\d{4}-\d{2}$/.test(mes)) {
+        res.status(400).json({ error: "mes en formato YYYY-MM" });
+        return;
+      }
+      if (!conHistorial) {
+        mes = new Date().toISOString().slice(0, 7); // mes en curso, forzado
+      }
       const movimientos = db
         .prepare(
           `SELECT rm.*, o.folio, c.nombre AS cuenta, u.nombre AS registrado_por
@@ -4735,7 +4774,37 @@ export function crearRouter(db: Database): Router {
            JOIN usuarios u ON u.id = rm.creado_por
            WHERE rm.cliente_id = ? ORDER BY rm.id DESC`
         )
-        .all(id);
+        .all(id) as Array<{
+        id: number;
+        tipo: string;
+        importe: number;
+        comprobante: string;
+        observaciones: string;
+        creado_en: string;
+        folio: string | null;
+        cuenta: string | null;
+        registrado_por: string;
+      }>;
+      if (mes) {
+        // Saldo de apertura del mes (todo lo acumulado antes del día 1) +
+        // movimientos del mes en orden cronológico, como el Excel del negocio.
+        const saldoAnterior = movimientos
+          .filter((m) => m.creado_en.slice(0, 7) < mes)
+          .reduce((s, m) => s + (m.tipo === "cargo" ? -m.importe : m.importe), 0);
+        const delMes = movimientos
+          .filter((m) => m.creado_en.slice(0, 7) === mes)
+          .slice()
+          .reverse();
+        res.json({
+          cliente: { id: cliente.id, nombre: cliente.nombre },
+          saldo: saldoResguardo(db, id),
+          mes,
+          historial_completo: conHistorial,
+          saldo_anterior: redondear2(saldoAnterior),
+          movimientos: delMes,
+        });
+        return;
+      }
       res.json({ cliente: { id: cliente.id, nombre: cliente.nombre }, saldo: saldoResguardo(db, id), movimientos });
     }
   );
@@ -6686,6 +6755,418 @@ export function crearRouter(db: Database): Router {
   // (proceso y estatus), la bitácora y el concentrado, pero no registra
   // observaciones ni modifica nada.
 
+  // ---- Sección RESGUARDOS (unificada; sustituye al apartado 'Resguardo TRF') ----
+  // Lista de TODOS los resguardos: uno por cliente con su saldo (suma de sus
+  // movimientos, nunca guardada) y el resguardo de la empresa (TRF). Quien
+  // quiera el detalle elige uno y consulta /clientes/:id/resguardo (o
+  // /trf/resguardo para el de la empresa).
+  r.get(
+    "/resguardos",
+    autenticar,
+    requiereRol(
+      "admin_tesoreria",
+      "admin_operaciones",
+      "admin_validacion",
+      "validador_tesoreria",
+      "tesoreria",
+      "fondeador",
+      "direccion",
+      "auditoria",
+      "admin"
+    ),
+    (_req, res) => {
+      const filas = db
+        .prepare(
+          `SELECT c.id AS cliente_id, c.nombre AS cliente, c.activo,
+             (SELECT COALESCE(SUM(CASE WHEN rm.tipo IN ('deposito','financiamiento') THEN rm.importe ELSE -rm.importe END), 0)
+              FROM resguardos_movimientos rm WHERE rm.cliente_id = c.id) AS saldo,
+             (SELECT COUNT(*) FROM resguardos_movimientos rm WHERE rm.cliente_id = c.id) AS movimientos_count,
+             (SELECT MAX(rm.creado_en) FROM resguardos_movimientos rm WHERE rm.cliente_id = c.id) AS ultimo_movimiento
+           FROM clientes c ORDER BY c.nombre`
+        )
+        .all() as Array<{
+        cliente_id: number;
+        cliente: string;
+        activo: number;
+        saldo: number;
+        movimientos_count: number;
+        ultimo_movimiento: string | null;
+      }>;
+      // Resguardo de la empresa (TRF) resumido: el detalle vive en /trf/resguardo.
+      const saldosTrf = saldoPorMonedaTrf(db);
+      const equivalenteTotal = redondear2(saldosTrf.reduce((s, x) => s + x.equivalente_mxn, 0));
+      res.json({
+        resguardos: filas.map((f) => ({ ...f, saldo: redondear2(f.saldo) })),
+        trf: { saldos: saldosTrf, equivalente_total_mxn: equivalenteTotal },
+      });
+    }
+  );
+
+  // ---- Contaduría: solicitudes de TIMBRADO (facturación) ----
+  // Listado de operaciones que el negocio marcó con timbrar=1 (requieren
+  // facturación). Contaduría las recibe aquí; al abrir una ve el detalle de la
+  // operación (sólo lectura y sólo de operaciones con timbrar=1).
+  r.get("/timbrado/solicitudes", autenticar, requiereRol("contaduria", "admin"), (_req, res) => {
+    const filas = db
+      .prepare(
+        `SELECT o.id, o.folio, o.fecha_operacion, o.estado, o.monto, o.moneda, o.tipo, o.tipo_operacion,
+                o.comision_pct, c.nombre AS cliente, u.nombre AS capturado_por,
+                (SELECT COUNT(*) FROM dispersiones d WHERE d.operacion_id = o.id) AS dispersiones_count
+         FROM operaciones o
+         LEFT JOIN clientes c ON c.id = o.cliente_id
+         JOIN usuarios u ON u.id = o.creado_por
+         WHERE o.timbrar = 1
+         ORDER BY o.id DESC`
+      )
+      .all() as Array<Record<string, unknown>>;
+    const porEstado: Record<string, number> = {};
+    for (const f of filas) {
+      const e = String(f.estado);
+      porEstado[e] = (porEstado[e] ?? 0) + 1;
+    }
+    res.json({ solicitudes: filas, total: filas.length, por_estado: porEstado });
+  });
+
+  // ---- ESTRUCTURAS DE CUENTAS (formato Ejercicio 2026 de Contaduría) ----
+  // Contaduría hace la estructura de las cuentas (frentes y sus RB/flujos) y
+  // la mantiene; va LIGADA a las cuentas de Tesorería (cuenta_id) y alimenta
+  // el catálogo que se ve en la captura de operaciones. Admin de Tesorería la
+  // consulta, ve cuáles están activas y edita/activa-desactiva.
+  r.get(
+    "/estructuras",
+    autenticar,
+    requiereRol("contaduria", "admin_tesoreria", "admin", "direccion", "auditoria"),
+    (req, res) => {
+      const filtros: string[] = [];
+      const params: unknown[] = [];
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      if (q) {
+        filtros.push("(e.razon_social LIKE ? OR e.giro LIKE ? OR e.nucleo LIKE ? OR e.empresa LIKE ?)");
+        const like = `%${q}%`;
+        params.push(like, like, like, like);
+      }
+      const tipo = typeof req.query.tipo === "string" ? req.query.tipo.trim().toUpperCase() : "";
+      if (tipo) {
+        filtros.push("e.tipo = ?");
+        params.push(tipo);
+      }
+      const estatus = typeof req.query.estatus === "string" ? req.query.estatus.trim() : "";
+      if (estatus === "1" || estatus === "0") {
+        filtros.push("e.estatus_operacion = ?");
+        params.push(Number(estatus));
+      }
+      const filas = db
+        .prepare(
+          `SELECT e.*, cu.nombre AS cuenta, cu.banco AS cuenta_banco
+           FROM estructuras e
+           LEFT JOIN cuentas cu ON cu.id = e.cuenta_id
+           ${filtros.length ? `WHERE ${filtros.join(" AND ")}` : ""}
+           ORDER BY e.giro, e.nucleo, e.tipo, e.razon_social`
+        )
+        .all(...params) as Array<import("./db.js").Estructura & { cuenta: string | null; cuenta_banco: string | null }>;
+      res.json({
+        estructuras: filas.map((f) => ({
+          ...f,
+          bancos: JSON.parse(f.bancos as unknown as string) as Record<string, number>,
+          extras: JSON.parse(f.extras as unknown as string) as Record<string, number>,
+        })),
+        total: filas.length,
+      });
+    }
+  );
+
+  // Catálogo ACTIVO de estructuras para la captura de operaciones (el que ven
+  // los ejecutivos): frentes y RB vigentes, con su importe máximo por mes.
+  r.get(
+    "/estructuras/catalogo",
+    autenticar,
+    requiereRol("operacion", "admin_operaciones", "validacion", "admin_validacion", "admin_tesoreria", "contaduria", "admin"),
+    (_req, res) => {
+      const filas = db
+        .prepare(
+          `SELECT e.id, e.cuenta_id, e.giro, e.nucleo, e.razon_social, e.tipo, e.empresa,
+                  e.importe_maximo, e.total_cuentas, cu.nombre AS cuenta
+           FROM estructuras e LEFT JOIN cuentas cu ON cu.id = e.cuenta_id
+           WHERE e.estatus_operacion = 1
+           ORDER BY e.tipo, e.razon_social`
+        )
+        .all();
+      res.json({ estructuras: filas });
+    }
+  );
+
+  // Validación compartida del cuerpo de una estructura.
+  function validarCuerpoEstructura(
+    entrada: Record<string, unknown> | undefined,
+    parcial: boolean
+  ): { ok: true; campos: Record<string, unknown> } | { ok: false; errores: string[] } {
+    const errores: string[] = [];
+    const campos: Record<string, unknown> = {};
+    const t = entrada ?? {};
+    if (t.razon_social !== undefined || !parcial) {
+      const rs = typeof t.razon_social === "string" ? t.razon_social.trim() : "";
+      if (rs.length < 2) errores.push("razon_social requerida (mínimo 2 caracteres)");
+      else campos.razon_social = rs.toUpperCase();
+    }
+    if (t.tipo !== undefined || !parcial) {
+      const tp = typeof t.tipo === "string" ? t.tipo.trim().toUpperCase() : "";
+      if (!["FRENTE", "RB", "FLUJOS", "SOFOM"].includes(tp)) errores.push("tipo debe ser FRENTE, RB, FLUJOS o SOFOM");
+      else campos.tipo = tp;
+    }
+    for (const [clave, max] of [
+      ["giro", 120],
+      ["nucleo", 120],
+      ["empresa", 200],
+      ["importe_maximo", 120],
+      ["observaciones", 240],
+      ["observaciones2", 240],
+    ] as const) {
+      if (t[clave] !== undefined) {
+        if (typeof t[clave] !== "string") errores.push(`${clave} debe ser texto`);
+        else campos[clave] = (t[clave] as string).trim().slice(0, max);
+      }
+    }
+    if (t.estatus_operacion !== undefined) {
+      const es = t.estatus_operacion;
+      if (typeof es !== "boolean" && es !== 0 && es !== 1) errores.push("estatus_operacion debe ser booleano o 0/1");
+      else campos.estatus_operacion = es === true || es === 1 ? 1 : 0;
+    }
+    if (t.total_cuentas !== undefined) {
+      const tc = Number(t.total_cuentas);
+      if (!Number.isInteger(tc) || tc < 0) errores.push("total_cuentas debe ser un entero >= 0");
+      else campos.total_cuentas = tc;
+    }
+    if (t.bancos !== undefined) {
+      if (typeof t.bancos !== "object" || t.bancos === null || Array.isArray(t.bancos)) {
+        errores.push("bancos debe ser un objeto {banco: 0|1}");
+      } else {
+        const bancos: Record<string, number> = {};
+        for (const [k, v] of Object.entries(t.bancos as Record<string, unknown>)) {
+          bancos[k.trim().toUpperCase().slice(0, 60)] = v === 1 || v === true ? 1 : 0;
+        }
+        campos.bancos = JSON.stringify(bancos);
+      }
+    }
+    if (t.extras !== undefined) {
+      if (typeof t.extras !== "object" || t.extras === null || Array.isArray(t.extras)) {
+        errores.push("extras debe ser un objeto {trámite: 0|1}");
+      } else {
+        const extras: Record<string, number> = {};
+        for (const [k, v] of Object.entries(t.extras as Record<string, unknown>)) {
+          extras[k.trim().toUpperCase().slice(0, 80)] = v === 1 || v === true ? 1 : 0;
+        }
+        campos.extras = JSON.stringify(extras);
+      }
+    }
+    if (t.cuenta_id !== undefined) {
+      if (t.cuenta_id === null || t.cuenta_id === "") campos.cuenta_id = null;
+      else {
+        const cid = Number(t.cuenta_id);
+        if (!Number.isInteger(cid)) errores.push("cuenta_id debe ser entero o null");
+        else {
+          const existe = db.prepare("SELECT id FROM cuentas WHERE id = ?").get(cid);
+          if (!existe) errores.push(`la cuenta ${cid} no existe`);
+          else campos.cuenta_id = cid;
+        }
+      }
+    }
+    if (errores.length) return { ok: false, errores };
+    return { ok: true, campos };
+  }
+
+  r.post("/estructuras", autenticar, usuarioVivo, requiereRol("contaduria", "admin"), (req, res) => {
+    const v = validarCuerpoEstructura(req.body as Record<string, unknown>, false);
+    if (!v.ok) {
+      res.status(400).json({ error: "Datos inválidos", detalles: v.errores });
+      return;
+    }
+    const dup = db
+      .prepare("SELECT id FROM estructuras WHERE razon_social = ? AND tipo = ? AND COALESCE(empresa, '') = COALESCE(?, '')")
+      .get(v.campos.razon_social, v.campos.tipo, (v.campos.empresa as string) ?? "");
+    if (dup) {
+      res.status(409).json({ error: `Ya existe una estructura '${v.campos.razon_social}' (${v.campos.tipo})` });
+      return;
+    }
+    const c = v.campos;
+    const raiz = db
+      .prepare(
+        `INSERT INTO estructuras (cuenta_id, giro, nucleo, razon_social, tipo, empresa, importe_maximo,
+            observaciones, estatus_operacion, bancos, total_cuentas, extras, observaciones2, creado_por)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        (c.cuenta_id as number | null) ?? null,
+        (c.giro as string) ?? "",
+        (c.nucleo as string) ?? "",
+        c.razon_social,
+        c.tipo,
+        (c.empresa as string) ?? "",
+        (c.importe_maximo as string) ?? "",
+        (c.observaciones as string) ?? "",
+        (c.estatus_operacion as number) ?? 1,
+        (c.bancos as string) ?? "{}",
+        (c.total_cuentas as number) ?? 0,
+        (c.extras as string) ?? "{}",
+        (c.observaciones2 as string) ?? "",
+        req.usuario!.id
+      );
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "estructura_creada",
+      `Estructura creada: ${String(c.razon_social)} (${String(c.tipo)})${c.empresa ? ` — frente ${String(c.empresa)}` : ""}`
+    );
+    const fila = db.prepare("SELECT * FROM estructuras WHERE id = ?").get(raiz.lastInsertRowid);
+    res.status(201).json({ estructura: fila });
+  });
+
+  r.patch("/estructuras/:id", autenticar, usuarioVivo, requiereRol("contaduria", "admin_tesoreria", "admin"), (req, res) => {
+    const id = Number(req.params.id);
+    const actual = db.prepare("SELECT * FROM estructuras WHERE id = ?").get(id) as
+      | import("./db.js").Estructura
+      | undefined;
+    if (!actual) {
+      res.status(404).json({ error: "Estructura no encontrada" });
+      return;
+    }
+    const v = validarCuerpoEstructura(req.body as Record<string, unknown>, true);
+    if (!v.ok) {
+      res.status(400).json({ error: "Datos inválidos", detalles: v.errores });
+      return;
+    }
+    const c = v.campos;
+    const claves = Object.keys(c);
+    if (!claves.length) {
+      res.status(400).json({ error: "Nada que actualizar" });
+      return;
+    }
+    // Si cambia razón social/tipo, no chocar con otra estructura existente.
+    if (c.razon_social || c.tipo || c.empresa !== undefined) {
+      const rs = (c.razon_social as string) ?? actual.razon_social;
+      const tp = (c.tipo as string) ?? actual.tipo;
+      const em = c.empresa !== undefined ? ((c.empresa as string) ?? "") : actual.empresa;
+      const dup = db
+        .prepare("SELECT id FROM estructuras WHERE razon_social = ? AND tipo = ? AND COALESCE(empresa, '') = COALESCE(?, '') AND id != ?")
+        .get(rs, tp, em, id);
+      if (dup) {
+        res.status(409).json({ error: `Ya existe otra estructura '${rs}' (${tp})` });
+        return;
+      }
+    }
+    const asignaciones = claves.map((k) => `${k} = ?`).join(", ");
+    db.prepare(`UPDATE estructuras SET ${asignaciones}, actualizado_en = datetime('now') WHERE id = ?`).run(
+      ...claves.map((k) => c[k]),
+      id
+    );
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "estructura_editada",
+      `Estructura '${actual.razon_social}' (${actual.tipo}) editada: ${claves.join(", ")}`
+    );
+    const fila = db.prepare("SELECT * FROM estructuras WHERE id = ?").get(id);
+    res.json({ estructura: fila });
+  });
+
+  // Estatus de operación (activa/inactiva): lo maneja el Administrador de
+  // Tesorería para saber cuáles están operando; también lo puede hacer admin.
+  r.patch("/estructuras/:id/estatus", autenticar, usuarioVivo, requiereRol("admin_tesoreria", "admin"), (req, res) => {
+    const id = Number(req.params.id);
+    const actual = db.prepare("SELECT * FROM estructuras WHERE id = ?").get(id) as
+      | import("./db.js").Estructura
+      | undefined;
+    if (!actual) {
+      res.status(404).json({ error: "Estructura no encontrada" });
+      return;
+    }
+    const { estatus_operacion } = req.body ?? {};
+    if (typeof estatus_operacion !== "boolean" && estatus_operacion !== 0 && estatus_operacion !== 1) {
+      res.status(400).json({ error: "estatus_operacion debe ser booleano o 0/1" });
+      return;
+    }
+    const nuevo = estatus_operacion === true || estatus_operacion === 1 ? 1 : 0;
+    db.prepare("UPDATE estructuras SET estatus_operacion = ?, actualizado_en = datetime('now') WHERE id = ?").run(
+      nuevo,
+      id
+    );
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "estructura_estatus",
+      `Estructura '${actual.razon_social}' (${actual.tipo}) ${nuevo ? "ACTIVADA" : "DESACTIVADA"}`
+    );
+    const fila = db.prepare("SELECT * FROM estructuras WHERE id = ?").get(id);
+    res.json({ estructura: fila });
+  });
+
+  // Carga por LAYOUT (el Excel que comparte Contaduría): filas con las columnas
+  // del formato (giro, nucleo, razon_social, tipo, empresa, importe_maximo,
+  // bancos, total_cuentas, extras…). Actualiza la estructura existente cuando
+  // coincide razón social + tipo y crea las nuevas.
+  r.post("/estructuras/layout", autenticar, usuarioVivo, requiereRol("contaduria", "admin_tesoreria", "admin"), (req, res) => {
+    const { filas } = req.body ?? {};
+    if (!Array.isArray(filas) || !filas.length) {
+      res.status(400).json({ error: "filas requeridas (arreglo del layout)" });
+      return;
+    }
+    const creadas: string[] = [];
+    const actualizadas: string[] = [];
+    const errores: string[] = [];
+    const tx = db.transaction(() => {
+      (filas as Array<Record<string, unknown>>).forEach((fila, i) => {
+        const n = i + 1;
+        const v = validarCuerpoEstructura(fila, false);
+        if (!v.ok) {
+          errores.push(`fila ${n}: ${v.errores.join("; ")}`);
+          return;
+        }
+        const c = v.campos;
+        const existente = db
+          .prepare("SELECT * FROM estructuras WHERE razon_social = ? AND tipo = ? AND COALESCE(empresa, '') = COALESCE(?, '')")
+          .get(c.razon_social, c.tipo, (c.empresa as string) ?? "") as import("./db.js").Estructura | undefined;
+        if (existente) {
+          const claves = Object.keys(c);
+          const asignaciones = claves.map((k) => `${k} = ?`).join(", ");
+          db.prepare(`UPDATE estructuras SET ${asignaciones}, actualizado_en = datetime('now') WHERE id = ?`).run(
+            ...claves.map((k) => c[k]),
+            existente.id
+          );
+          actualizadas.push(String(c.razon_social));
+        } else {
+          db.prepare(
+            `INSERT INTO estructuras (cuenta_id, giro, nucleo, razon_social, tipo, empresa, importe_maximo,
+                observaciones, estatus_operacion, bancos, total_cuentas, extras, observaciones2, creado_por)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            (c.cuenta_id as number | null) ?? null,
+            (c.giro as string) ?? "",
+            (c.nucleo as string) ?? "",
+            String(c.razon_social),
+            String(c.tipo),
+            (c.empresa as string) ?? "",
+            (c.importe_maximo as string) ?? "",
+            (c.observaciones as string) ?? "",
+            (c.estatus_operacion as number) ?? 1,
+            (c.bancos as string) ?? "{}",
+            (c.total_cuentas as number) ?? 0,
+            (c.extras as string) ?? "{}",
+            (c.observaciones2 as string) ?? "",
+            req.usuario!.id
+          );
+          creadas.push(String(c.razon_social));
+        }
+      });
+    });
+    tx();
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "estructuras_layout",
+      `Layout de estructuras cargado: ${creadas.length} creada(s), ${actualizadas.length} actualizada(s), ${errores.length} error(es)`
+    );
+    res.status(201).json({ creadas: creadas.length, actualizadas: actualizadas.length, errores, detalles_creadas: creadas, detalles_actualizadas: actualizadas });
+  });
+
   return r;
 }
 
@@ -6729,6 +7210,10 @@ function puedeVerOperacion(
     case "direccion":
     case "auditoria":
       return true;
+    case "contaduria":
+      // Contaduría sólo abre operaciones que piden timbrado (facturación);
+      // es el detalle de sus solicitudes, en sólo lectura.
+      return op.timbrar === 1;
     case "operacion":
       return visibleParaEjecutivo(db, op, usuario.id);
     case "validacion": {
