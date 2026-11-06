@@ -3456,9 +3456,18 @@ export function crearRouter(db: Database): Router {
   // estructura a su cuenta: Contaduría la necesita; no puede consultar el
   // catálogo completo porque ahí viven los datos bancarios. Va ANTES de
   // /cuentas/:id para que Express no la capture como parámetro.
-  r.get("/cuentas/nombres", autenticar, requiereRol("contaduria", "admin_tesoreria", "admin"), (_req, res) => {
+  r.get("/cuentas/nombres", autenticar, requiereRol("contaduria", "admin_tesoreria", "admin"), (req, res) => {
+    // ?disponibles=1 → sólo las cuentas que AÚN pueden ligarse a la estructura:
+    // activas, sin estructura ligada y NO marcadas 'fuera de la estructura'.
+    const disponibles = req.query.disponibles === "1";
     const filas = db
-      .prepare("SELECT id, nombre, banco, tipo FROM cuentas WHERE activa = 1 ORDER BY nombre")
+      .prepare(
+        `SELECT id, nombre, banco, tipo FROM cuentas WHERE activa = 1${
+          disponibles
+            ? " AND fuera_estructura = 0 AND id NOT IN (SELECT cuenta_id FROM estructuras WHERE cuenta_id IS NOT NULL)"
+            : ""
+        } ORDER BY nombre`
+      )
       .all();
     res.json({ cuentas: filas });
   });
@@ -3471,6 +3480,64 @@ export function crearRouter(db: Database): Router {
       .all();
     res.json({ cuentas: filas });
   });
+
+  // ---- Estructuras: cuentas marcadas FUERA de la estructura ----
+  // Contaduría marca cuentas (flujos o frentes) que salen de la estructura:
+  // ya no aparecen al armarla, pero sí en este listado, desde el que se
+  // pueden reincorporar.
+  r.get("/cuentas/fuera-estructura", autenticar, requiereRol("contaduria", "admin_tesoreria", "admin"), (_req, res) => {
+    const filas = db
+      .prepare("SELECT id, nombre, banco, tipo, fuera_estructura FROM cuentas WHERE fuera_estructura = 1 ORDER BY nombre")
+      .all();
+    res.json({ cuentas: filas });
+  });
+
+  // Marcar fuera de la estructura (fuera=true) o reincorporar (fuera=false).
+  // Al salir, sus filas ligadas de la estructura se borran.
+  r.patch(
+    "/cuentas/:id/fuera-estructura",
+    autenticar,
+    usuarioVivo,
+    requiereRol("contaduria", "admin_tesoreria", "admin"),
+    (req, res) => {
+      const id = Number(req.params.id);
+      const cuenta = db.prepare("SELECT * FROM cuentas WHERE id = ?").get(id) as
+        | { id: number; nombre: string; fuera_estructura: number }
+        | undefined;
+      if (!cuenta) {
+        res.status(404).json({ error: "Cuenta no encontrada" });
+        return;
+      }
+      const { fuera } = req.body ?? {};
+      if (typeof fuera !== "boolean") {
+        res.status(400).json({ error: "fuera debe ser true (sacar de la estructura) o false (reincorporar)" });
+        return;
+      }
+      if (fuera && cuenta.fuera_estructura === 1) {
+        res.status(409).json({ error: "La cuenta ya está fuera de la estructura" });
+        return;
+      }
+      if (!fuera && cuenta.fuera_estructura === 0) {
+        res.status(409).json({ error: "La cuenta ya está dentro de la estructura" });
+        return;
+      }
+      const tx = db.transaction(() => {
+        db.prepare("UPDATE cuentas SET fuera_estructura = ? WHERE id = ?").run(fuera ? 1 : 0, id);
+        if (fuera) db.prepare("DELETE FROM estructuras WHERE cuenta_id = ?").run(id);
+      });
+      tx();
+      registrarAuditoria(
+        db,
+        req.usuario!.id,
+        "cuenta_estructura",
+        `${fuera ? "Sacó" : "Reincorporó"} la cuenta '${cuenta.nombre}' ${fuera ? "de la estructura" : "en la estructura"}`
+      );
+      const actualizada = db
+        .prepare("SELECT id, nombre, banco, tipo, fuera_estructura FROM cuentas WHERE id = ?")
+        .get(id);
+      res.json({ cuenta: actualizada });
+    }
+  );
 
   // Fase 13: Tesorería marca qué cuentas del catálogo son visibles para el
   // listado de PAGADORAS que ven los operadores al capturar. Es un control de
@@ -3544,6 +3611,8 @@ export function crearRouter(db: Database): Router {
       const filas = db
         .prepare(
           `SELECT c.*,
+             (SELECT e.razon_social FROM estructuras e WHERE e.cuenta_id = c.id ORDER BY e.id DESC LIMIT 1) AS estructura_razon,
+             (SELECT e.tipo FROM estructuras e WHERE e.cuenta_id = c.id ORDER BY e.id DESC LIMIT 1) AS estructura_tipo,
              (c.saldo_inicial
                - COALESCE((SELECT SUM(p.monto) FROM pagos p WHERE p.cuenta_id = c.id), 0)
                + COALESCE((SELECT SUM(CASE WHEN m.tipo = 'deposito' THEN m.monto ELSE -m.monto END)
@@ -4201,6 +4270,59 @@ export function crearRouter(db: Database): Router {
     );
     const cuenta = db.prepare("SELECT * FROM cuentas WHERE id = ?").get(raiz.lastInsertRowid);
     res.status(201).json({ cuenta });
+  });
+
+  // ---- Limpiar el CATÁLOGO COMPLETO de cuentas (pruebas) ----
+  // Sólo el Administrador de Tesorería (o admin) y con confirmación explícita:
+  // borra TODAS las cuentas y lo que cuelga de ellas (movimientos, depósitos,
+  // asignaciones, credenciales, portales). Las operaciones y la estructura se
+  // conservan, pero quedan sin cuenta ligada.
+  r.delete("/cuentas", autenticar, usuarioVivo, requiereRol("admin_tesoreria", "admin"), (req, res) => {
+    const confirmar = String(
+      (req.body as { confirmar?: unknown } | undefined)?.confirmar ?? req.query.confirmar ?? ""
+    );
+    if (confirmar !== "LIMPIAR") {
+      res.status(400).json({ error: 'Confirmación requerida: { confirmar: "LIMPIAR" }' });
+      return;
+    }
+    const contar = (t: string): number =>
+      (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
+    const antes = {
+      cuentas: contar("cuentas"),
+      movimientos: contar("movimientos_cuentas"),
+      depositos: contar("operaciones_depositos"),
+      asignaciones: contar("cuentas_asignaciones"),
+      credenciales: contar("cuentas_credenciales"),
+      altas_portales: contar("altas_portales"),
+    };
+    const tx = db.transaction(() => {
+      // Hijos obligatorios: se borran con la cuenta.
+      db.prepare("DELETE FROM depositos_comprobantes").run();
+      db.prepare("DELETE FROM aplicaciones_recursos").run();
+      db.prepare("DELETE FROM movimientos_cuentas").run();
+      db.prepare("DELETE FROM operaciones_depositos").run();
+      db.prepare("DELETE FROM credenciales_accesos").run();
+      db.prepare("DELETE FROM cuentas_credenciales").run();
+      db.prepare("DELETE FROM altas_portales").run();
+      db.prepare("DELETE FROM cuentas_asignaciones").run();
+      db.prepare("DELETE FROM coberturas").run();
+      // Referencias opcionales: el histórico se conserva sin cuenta ligada.
+      db.prepare("UPDATE dispersiones SET pagadora_cuenta_id = NULL").run();
+      db.prepare("UPDATE operaciones_destinos SET cuenta_id = NULL").run();
+      db.prepare("UPDATE resguardos_movimientos SET cuenta_id = NULL").run();
+      db.prepare("UPDATE pagos_especiales SET pagadora_cuenta_id = NULL").run();
+      db.prepare("UPDATE estructuras SET cuenta_id = NULL").run();
+      db.prepare("UPDATE pagos SET cuenta_id = NULL").run();
+      db.prepare("DELETE FROM cuentas").run();
+    });
+    tx();
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "cuentas_limpiadas",
+      `Catálogo de cuentas limpiado: ${antes.cuentas} cuenta(s), ${antes.movimientos} movimiento(s), ${antes.depositos} depósito(s)`
+    );
+    res.json({ ...antes, mensaje: "Catálogo de cuentas limpiado" });
   });
 
   // Tarea 12: sacar de operación (bloqueo o no uso momentáneo) y reactivar
@@ -7273,72 +7395,78 @@ export function crearRouter(db: Database): Router {
     res.json({ estructura: fila });
   });
 
-  // Carga por LAYOUT (el Excel que comparte Contaduría): filas con las columnas
-  // del formato (giro, nucleo, razon_social, tipo, empresa, importe_maximo,
-  // bancos, total_cuentas, extras…). Actualiza la estructura existente cuando
-  // coincide razón social + tipo y crea las nuevas.
-  r.post("/estructuras/layout", autenticar, usuarioVivo, requiereRol("contaduria", "admin_tesoreria", "admin"), (req, res) => {
-    const { filas } = req.body ?? {};
-    if (!Array.isArray(filas) || !filas.length) {
-      res.status(400).json({ error: "filas requeridas (arreglo del layout)" });
+  // ---- Borrar estructura (la armamos A MANO; sin layout) ----
+  // Borrar UNA fila de la estructura.
+  r.delete("/estructuras/:id", autenticar, usuarioVivo, requiereRol("contaduria", "admin_tesoreria", "admin"), (req, res) => {
+    const id = Number(req.params.id);
+    const actual = db.prepare("SELECT * FROM estructuras WHERE id = ?").get(id) as
+      | import("./db.js").Estructura
+      | undefined;
+    if (!actual) {
+      res.status(404).json({ error: "Estructura no encontrada" });
       return;
     }
-    const creadas: string[] = [];
-    const actualizadas: string[] = [];
-    const errores: string[] = [];
+    db.prepare("DELETE FROM estructuras WHERE id = ?").run(id);
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "estructura_borrada",
+      `Estructura '${actual.razon_social}' (${actual.tipo}) borrada`
+    );
+    res.json({ borrada: 1 });
+  });
+
+  // Borrar TODA la estructura (empezar desde cero). Con confirmación explícita.
+  r.delete("/estructuras", autenticar, usuarioVivo, requiereRol("contaduria", "admin_tesoreria", "admin"), (req, res) => {
+    const confirmar = String(
+      (req.body as { confirmar?: unknown } | undefined)?.confirmar ?? req.query.confirmar ?? ""
+    );
+    if (confirmar !== "BORRAR") {
+      res.status(400).json({ error: 'Confirmación requerida: { confirmar: "BORRAR" }' });
+      return;
+    }
+    const total = (db.prepare("SELECT COUNT(*) AS n FROM estructuras").get() as { n: number }).n;
     const tx = db.transaction(() => {
-      (filas as Array<Record<string, unknown>>).forEach((fila, i) => {
-        const n = i + 1;
-        const v = validarCuerpoEstructura(fila, false);
-        if (!v.ok) {
-          errores.push(`fila ${n}: ${v.errores.join("; ")}`);
-          return;
-        }
-        const c = v.campos;
-        const existente = db
-          .prepare("SELECT * FROM estructuras WHERE razon_social = ? AND tipo = ? AND COALESCE(empresa, '') = COALESCE(?, '')")
-          .get(c.razon_social, c.tipo, (c.empresa as string) ?? "") as import("./db.js").Estructura | undefined;
-        if (existente) {
-          const claves = Object.keys(c);
-          const asignaciones = claves.map((k) => `${k} = ?`).join(", ");
-          db.prepare(`UPDATE estructuras SET ${asignaciones}, actualizado_en = datetime('now') WHERE id = ?`).run(
-            ...claves.map((k) => c[k]),
-            existente.id
-          );
-          actualizadas.push(String(c.razon_social));
-        } else {
-          db.prepare(
-            `INSERT INTO estructuras (cuenta_id, giro, nucleo, razon_social, tipo, empresa, importe_maximo,
-                observaciones, estatus_operacion, bancos, total_cuentas, extras, observaciones2, creado_por)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          ).run(
-            (c.cuenta_id as number | null) ?? null,
-            (c.giro as string) ?? "",
-            (c.nucleo as string) ?? "",
-            String(c.razon_social),
-            String(c.tipo),
-            (c.empresa as string) ?? "",
-            (c.importe_maximo as string) ?? "",
-            (c.observaciones as string) ?? "",
-            (c.estatus_operacion as number) ?? 1,
-            (c.bancos as string) ?? "{}",
-            (c.total_cuentas as number) ?? 0,
-            (c.extras as string) ?? "{}",
-            (c.observaciones2 as string) ?? "",
-            req.usuario!.id
-          );
-          creadas.push(String(c.razon_social));
-        }
-      });
+      db.prepare("DELETE FROM estructuras").run();
     });
     tx();
     registrarAuditoria(
       db,
       req.usuario!.id,
-      "estructuras_layout",
-      `Layout de estructuras cargado: ${creadas.length} creada(s), ${actualizadas.length} actualizada(s), ${errores.length} error(es)`
+      "estructura_borrada",
+      `Estructura completa borrada: ${total} fila(s)`
     );
-    res.status(201).json({ creadas: creadas.length, actualizadas: actualizadas.length, errores, detalles_creadas: creadas, detalles_actualizadas: actualizadas });
+    res.json({ borradas: total });
+  });
+
+  // Marcar que la cuenta de una fila SALIÓ de la estructura: la fila se borra
+  // y la cuenta queda marcada (ya no aparece al armar la estructura; sí en el
+  // listado de cuentas fuera de la estructura).
+  r.post("/estructuras/:id/salir", autenticar, usuarioVivo, requiereRol("contaduria", "admin_tesoreria", "admin"), (req, res) => {
+    const id = Number(req.params.id);
+    const actual = db.prepare("SELECT * FROM estructuras WHERE id = ?").get(id) as
+      | import("./db.js").Estructura
+      | undefined;
+    if (!actual) {
+      res.status(404).json({ error: "Estructura no encontrada" });
+      return;
+    }
+    const tx = db.transaction(() => {
+      if (actual.cuenta_id) {
+        db.prepare("UPDATE cuentas SET fuera_estructura = 1 WHERE id = ?").run(actual.cuenta_id);
+      }
+      db.prepare("DELETE FROM estructuras WHERE id = ?").run(id);
+    });
+    tx();
+    registrarAuditoria(
+      db,
+      req.usuario!.id,
+      "estructura_salida",
+      `Estructura '${actual.razon_social}' (${actual.tipo}) salió de la estructura${
+        actual.cuenta_id ? " — cuenta marcada fuera" : ""
+      }`
+    );
+    res.json({ salida: 1 });
   });
 
   return r;

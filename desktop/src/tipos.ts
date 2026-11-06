@@ -201,6 +201,11 @@ export interface Cuenta {
   fecha_alta?: string | null;
   fecha_baja?: string | null;
   formato_reporte?: string;
+  /** Estructuras: 1 = la cuenta SALIÓ de la estructura (marca de Contaduría). */
+  fuera_estructura?: number;
+  /** Estructura ligada (si la cuenta ya está en la estructura de Contaduría). */
+  estructura_razon?: string | null;
+  estructura_tipo?: string | null;
 }
 
 /**

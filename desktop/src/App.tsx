@@ -3,10 +3,8 @@ import { api, descargarConcentrado, getToken, setToken } from "./api";import For
 import {
   descargarPlantillaCuentas,
   descargarPlantillaDispersiones,
-  descargarPlantillaEstructuras,
   descargarPlantillaTandas,
   leerFilas,
-  leerFilasEstructuras,
   mapearCuentasLayout,
   mapearDispersiones,
   mapearTandas,
@@ -2927,6 +2925,31 @@ function VistaCuentas() {
 
   const formato = (n: number) => n.toLocaleString("es-MX", { minimumFractionDigits: 2 });
 
+  /**
+   * Limpia el CATÁLOGO COMPLETO de cuentas (pruebas): borra todas las cuentas
+   * y lo que cuelga de ellas para volver a subirlas desde cero (layout o alta
+   * manual). Con doble confirmación.
+   */
+  const limpiarCatalogo = async () => {
+    if (
+      !window.confirm(
+        "Esto BORRA TODAS las cuentas de Tesorería junto con sus movimientos, depósitos, asignaciones y credenciales, para volver a subirlas desde cero (layout o alta manual). Las operaciones y la estructura se conservan pero quedan sin cuenta ligada. ¿Seguro que quieres limpiar el catálogo?"
+      )
+    )
+      return;
+    if (!window.confirm("ÚLTIMA CONFIRMACIÓN: el borrado del catálogo NO se puede deshacer. ¿Continuar?")) return;
+    setError("");
+    try {
+      const r = await api.limpiarCuentas();
+      setMensaje(
+        `${r.mensaje}: ${r.cuentas} cuenta(s), ${r.movimientos} movimiento(s). Ya puedes subir el catálogo nuevo.`
+      );
+      await refrescar();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   if (!esTesoreria && !error) {
     return (
       <>
@@ -2990,6 +3013,13 @@ function VistaCuentas() {
         <div className="barra">
           <button className="btn" onClick={() => setVerImportar((v) => !v)}>
             {verImportar ? "Cerrar cargador de cuentas" : "Cargar cuentas (layout)"}
+          </button>
+          <button
+            className="btn peligro"
+            title="Borra TODAS las cuentas y sus movimientos para volver a subirlas desde cero"
+            onClick={() => void limpiarCatalogo()}
+          >
+            Limpiar catálogo de cuentas
           </button>
         </div>
       )}
@@ -3830,6 +3860,7 @@ function CuentasSoloLectura({
             <th style={{ textAlign: "right" }}>Saldo actual</th>
             <th>Tesorero asignado</th>
             <th>Estado</th>
+            <th>Estructura</th>
             <th>Operadores</th>
             {esAdmin && (onEstado || onVisibilidad) && <th></th>}
             {onCredenciales && <th>Bóveda</th>}
@@ -3855,6 +3886,25 @@ function CuentasSoloLectura({
                   <span style={{ color: "var(--peligro, #c62828)", fontSize: "0.8rem" }}>FUERA DE OPERACIÓN</span>
                 ) : (
                   <span style={{ color: "var(--exito, #2e7d32)", fontSize: "0.8rem" }}>En operación</span>
+                )}
+              </td>
+              <td>
+                {c.fuera_estructura === 1 ? (
+                  <span className="marca-fuera" title="La cuenta SALIÓ de la estructura (Contaduría)">
+                    FUERA DE ESTRUCTURA
+                  </span>
+                ) : c.estructura_razon ? (
+                  <span
+                    style={{ color: "var(--exito, #2e7d32)", fontSize: "0.8rem" }}
+                    title="Cuenta asignada en la estructura de Contaduría"
+                  >
+                    {c.estructura_tipo ? `${c.estructura_tipo}: ` : ""}
+                    {c.estructura_razon}
+                  </span>
+                ) : (
+                  <span className="marca-sin-estructura" title="Ninguna estructura la tiene asignada">
+                    SIN ESTRUCTURA
+                  </span>
                 )}
               </td>
               <td>
@@ -3927,7 +3977,7 @@ function CuentasSoloLectura({
           ))}
           {visibles.length === 0 && (
             <tr>
-              <td colSpan={(esAdmin && (onEstado || onVisibilidad) ? 11 : 10) + (onCredenciales ? 1 : 0)} className="vacio">
+              <td colSpan={(esAdmin && (onEstado || onVisibilidad) ? 12 : 11) + (onCredenciales ? 1 : 0)} className="vacio">
                 Sin cuentas de tesorería registradas.
               </td>
             </tr>
@@ -9092,16 +9142,25 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
   const puedeEditar = usuario.rol === "contaduria" || usuario.rol === "admin_tesoreria" || usuario.rol === "admin";
   const puedeEstatus = usuario.rol === "admin_tesoreria" || usuario.rol === "admin";
   const [estructuras, setEstructuras] = useState<Estructura[]>([]);
-  const [cuentas, setCuentas] = useState<Array<{ id: number; nombre: string; banco: string }>>([]);
+  const [cuentas, setCuentas] = useState<Array<{ id: number; nombre: string; banco: string; tipo: string }>>([]);
+  // Cuentas marcadas FUERA de la estructura (listado con reincorporar).
+  const [fuera, setFuera] = useState<Array<{ id: number; nombre: string; banco: string; tipo: string }>>([]);
+  const [verFuera, setVerFuera] = useState(false);
+  const [editFila, setEditFila] = useState<Estructura | null>(null);
   const [error, setError] = useState("");
   const [mensaje, setMensaje] = useState("");
-  const [fQ, setFQ] = useState("");
+  // Filtros por ENCABEZADO (una casilla bajo cada columna, estilo Excel) para
+  // búsquedas eficientes sin recargar del servidor.
+  const [fGiro, setFGiro] = useState("");
+  const [fNucleo, setFNucleo] = useState("");
+  const [fRazon, setFRazon] = useState("");
+  const [fEmpresa, setFEmpresa] = useState("");
+  const [fImporte, setFImporte] = useState("");
   const [fTipo, setFTipo] = useState("");
-  const [fEstatus, setFEstatus] = useState("");
+  const [fAsig, setFAsig] = useState(""); // '' | 'con' | 'sin'
+  const [fEstatus, setFEstatus] = useState(""); // '' | '1' | '0'
   const [form, setForm] = useState<Record<string, unknown> | null>(null); // null = cerrado
   const [editId, setEditId] = useState<number | null>(null);
-  const [verLayout, setVerLayout] = useState(false);
-  const [cargandoLayout, setCargandoLayout] = useState(false);
   // Importe máximo seleccionable: 'de un X a un Y % del flujo'. El texto libre
   // sólo se usa al editar valores heredados que no siguen ese formato.
   const [impDesde, setImpDesde] = useState("");
@@ -9110,25 +9169,24 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
 
   const cargar = () => {
     api
-      .estructuras({
-        q: fQ || undefined,
-        tipo: fTipo || undefined,
-        estatus: fEstatus || undefined,
-      })
+      .estructuras()
       .then((r) => setEstructuras(r.estructuras))
       .catch((err: Error) => setError(err.message));
+    // Sólo las cuentas DISPONIBLES para ligar: sin estructura y no marcadas
+    // fuera. Las ya asignadas no aparecen al armar la estructura.
+    api
+      .cuentasNombres(true)
+      .then((r) => setCuentas(r.cuentas))
+      .catch(() => setCuentas([]));
+    api
+      .cuentasFueraEstructura()
+      .then((r) => setFuera(r.cuentas))
+      .catch(() => setFuera([]));
   };
 
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fQ, fTipo, fEstatus]);
-
-  useEffect(() => {
-    api
-      .cuentasNombres()
-      .then((r) => setCuentas(r.cuentas))
-      .catch(() => setCuentas([]));
   }, []);
 
   const frentes = useMemo(() => estructuras.filter((x) => x.tipo === "FRENTE"), [estructuras]);
@@ -9137,25 +9195,37 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
     [frentes]
   );
 
-  // Orden tipo Excel: cada FRENTE seguido de todas las RB (flujos) que le
-  // corresponden; las filas sin frente van al final.
-  const ordenadas = useMemo(() => {
-    const resto = estructuras.filter((x) => x.tipo !== "FRENTE");
+  // Filtro por encabezados (en cliente, instantáneo).
+  const filtradas = useMemo(() => {
+    const t = (s: unknown) => String(s ?? "").toLowerCase();
+    return estructuras.filter(
+      (e) =>
+        (!fGiro || t(e.giro).includes(fGiro.trim().toLowerCase())) &&
+        (!fNucleo || t(e.nucleo).includes(fNucleo.trim().toLowerCase())) &&
+        (!fRazon || t(e.razon_social).includes(fRazon.trim().toLowerCase())) &&
+        (!fEmpresa || t(e.empresa).includes(fEmpresa.trim().toLowerCase())) &&
+        (!fImporte || t(e.importe_maximo).includes(fImporte.trim().toLowerCase())) &&
+        (!fTipo || e.tipo === fTipo) &&
+        (!fAsig || (fAsig === "con" ? !!e.cuenta_id : !e.cuenta_id)) &&
+        (!fEstatus || String(e.estatus_operacion) === fEstatus)
+    );
+  }, [estructuras, fGiro, fNucleo, fRazon, fEmpresa, fImporte, fTipo, fAsig, fEstatus]);
+
+  // Bloques bien distinguidos: cada FRENTE con todas las RB (flujos) que le
+  // siguen; las filas sin frente van al bloque final 'SIN FRENTE ASIGNADO'.
+  const bloques = useMemo(() => {
+    const resto = filtradas.filter((x) => x.tipo !== "FRENTE");
     const usadas = new Set<number>();
-    const salida: Estructura[] = [];
-    for (const f of frentes) {
-      salida.push(f);
-      usadas.add(f.id);
-      for (const r of resto) {
-        if (!usadas.has(r.id) && r.empresa && r.empresa === f.razon_social) {
-          salida.push(r);
-          usadas.add(r.id);
-        }
-      }
+    const salida: Array<{ frente: Estructura | null; filas: Estructura[] }> = [];
+    for (const f of filtradas.filter((x) => x.tipo === "FRENTE")) {
+      const hijas = resto.filter((r) => !usadas.has(r.id) && r.empresa && r.empresa === f.razon_social);
+      hijas.forEach((r) => usadas.add(r.id));
+      salida.push({ frente: f, filas: hijas });
     }
-    for (const r of resto) if (!usadas.has(r.id)) salida.push(r);
+    const sueltas = resto.filter((r) => !usadas.has(r.id));
+    if (sueltas.length) salida.push({ frente: null, filas: sueltas });
     return salida;
-  }, [estructuras, frentes]);
+  }, [filtradas]);
 
   const numColumnas =
     7 + EXTRAS_ESTRUCTURA.length + 3 + (puedeEditar || puedeEstatus ? 1 : 0);
@@ -9219,6 +9289,7 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
       }
       setForm(null);
       setEditId(null);
+      setEditFila(null);
       setImpDesde("");
       setImpHasta("");
       setImpLibre(false);
@@ -9242,27 +9313,104 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
     }
   };
 
-  const cargarLayout = async (archivo: File) => {
+  /** Abre el formulario para editar una fila existente. */
+  const editar = (e: Estructura) => {
+    setEditId(e.id);
+    setEditFila(e);
+    const imp = parsearImporteEstructura(String(e.importe_maximo ?? ""));
+    setImpDesde(imp?.desde ?? "");
+    setImpHasta(imp?.hasta ?? "");
+    setImpLibre(!imp && String(e.importe_maximo ?? "").trim().length > 0);
+    setForm({
+      ...vaciaEstructura(),
+      ...e,
+      estatus_operacion: e.estatus_operacion === 1,
+      cuenta_id: e.cuenta_id ? String(e.cuenta_id) : "",
+      total_cuentas: e.total_cuentas ?? 0,
+      bancos: {
+        ...Object.fromEntries(BANCOS_ESTRUCTURA.map((b) => [b, false])),
+        ...Object.fromEntries(Object.entries(e.bancos).map(([k, v]) => [k, v === 1])),
+      },
+      extras: {
+        ...Object.fromEntries(EXTRAS_ESTRUCTURA.map((x) => [x, false])),
+        ...Object.fromEntries(Object.entries(e.extras).map(([k, v]) => [k, v === 1])),
+      },
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  /** Borrar UNA fila de la estructura. */
+  const borrarFila = async (e: Estructura) => {
+    if (
+      !window.confirm(
+        `¿Borrar la estructura '${e.razon_social}' (${e.tipo})? Su cuenta queda libre para volver a asignarse.`
+      )
+    )
+      return;
     setError("");
     setMensaje("");
-    setCargandoLayout(true);
     try {
-      const { filas, avisos } = await leerFilasEstructuras(archivo);
-      if (!filas.length) {
-        setError("No se reconoció ninguna fila válida del layout." + (avisos.length ? ` ${avisos.length} fila(s) con avisos.` : ""));
-        return;
-      }
-      const r = await api.cargarLayoutEstructuras(filas as unknown as Array<Record<string, unknown>>);
-      setMensaje(
-        `Layout cargado: ${r.creadas} creada(s), ${r.actualizadas} actualizada(s)` +
-          (r.errores.length ? `, ${r.errores.length} error(es): ${r.errores.slice(0, 3).join("; ")}` : "") +
-          (avisos.length ? ` · ${avisos.length} aviso(s)` : "")
-      );
+      await api.borrarEstructura(e.id);
+      setMensaje(`Estructura '${e.razon_social}' borrada.`);
       cargar();
     } catch (err) {
       setError((err as Error).message);
-    } finally {
-      setCargandoLayout(false);
+    }
+  };
+
+  /** La cuenta de esta fila SALE de la estructura: fila borrada + cuenta marcada. */
+  const salirDeEstructura = async (e: Estructura) => {
+    if (
+      !window.confirm(
+        `¿Sacar '${e.razon_social}' de la estructura?${
+          e.cuenta_id
+            ? " Su cuenta queda marcada FUERA y ya no aparecerá al armar la estructura (la verás en «Fuera de estructura»)."
+            : ""
+        }`
+      )
+    )
+      return;
+    setError("");
+    setMensaje("");
+    try {
+      await api.salirEstructura(e.id);
+      setMensaje(`'${e.razon_social}' salió de la estructura.`);
+      cargar();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  /** Borrar TODA la estructura y empezar desde cero. */
+  const borrarTodo = async () => {
+    if (!estructuras.length) return;
+    if (
+      !window.confirm(
+        `Esto BORRA TODA la estructura (${estructuras.length} fila(s)) para armarla desde cero. Las cuentas quedan libres; las marcadas fuera siguen en su listado. ¿Continuar?`
+      )
+    )
+      return;
+    setError("");
+    setMensaje("");
+    try {
+      const r = await api.borrarEstructurasTodas();
+      setMensaje(`Estructura borrada por completo (${r.borradas} fila(s)). Puedes armarla desde cero, paso a paso.`);
+      cargar();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  /** Reincorporar una cuenta marcada fuera de la estructura. */
+  const reincorporar = async (id: number, nombre: string) => {
+    setError("");
+    setMensaje("");
+    try {
+      await api.marcarFueraCuenta(id, false);
+      setMensaje(`Cuenta '${nombre}' reincorporada: vuelve a estar disponible al armar la estructura.`);
+      cargar();
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
 
@@ -9270,80 +9418,88 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
     <>
       <h2>Estructuras de cuentas</h2>
       <p style={{ color: "var(--tenue)", fontSize: "0.88rem", maxWidth: 980 }}>
-        Arma la estructura igual que en el Excel de Contaduría: seleccionas una cuenta, le cambias
-        el tipo (FRENTE o RB/flujo) y el frente queda para todas las RB que le siguen; el importe
-        máximo se selecciona (de un % a un % del flujo) y los trámites van con casillas de
-        verificación. {puedeEstatus ? "Desde aquí se ve cuáles están activas y se activan/desactivan." : "El estatus lo maneja el Administrador de Tesorería."}
+        Toda la estructura se arma A MANO (sin layout): seleccionas una cuenta disponible, le cambias
+        el tipo (FRENTE o RB/flujo) y el frente queda para todas las RB que le siguen, agrupadas en
+        BLOQUES bien distinguidos. El importe máximo se selecciona (de un % a un % del flujo) y los
+        trámites van con casillas de verificación. A cada frente le puedes ASIGNAR una cuenta de
+        Tesorería (puede quedar sin asignar) y puedes marcar cuentas que SALGAN de la estructura:
+        se listan en «Fuera de estructura». Usa los filtros de los encabezados para buscar rápido.{" "}
+        {puedeEstatus ? "Desde aquí se ve cuáles están activas y se activan/desactivan." : "El estatus lo maneja el Administrador de Tesorería."}
       </p>
       {error && <div className="error">{error}</div>}
       {mensaje && <div className="exito-msg">{mensaje}</div>}
 
       <div className="barra">
-        <input
-          placeholder="Buscar razón social, giro, núcleo, empresa…"
-          value={fQ}
-          onChange={(e) => setFQ(e.target.value)}
-          style={{ maxWidth: 320 }}
-        />
-        <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} style={{ maxWidth: 160 }}>
-          <option value="">Todos los tipos</option>
-          <option value="FRENTE">Frente</option>
-          <option value="RB">RB</option>
-          <option value="FLUJOS">Flujos</option>
-          <option value="SOFOM">SOFOM</option>
-        </select>
-        <select value={fEstatus} onChange={(e) => setFEstatus(e.target.value)} style={{ maxWidth: 160 }}>
-          <option value="">Activas e inactivas</option>
-          <option value="1">Sólo activas</option>
-          <option value="0">Sólo inactivas</option>
-        </select>
         {puedeCrear && (
-          <>
-            <button
-              className="btn"
-              onClick={() => {
-                setEditId(null);
-                setImpDesde("");
-                setImpHasta("");
-                setImpLibre(false);
-                setForm(vaciaEstructura());
-              }}
-            >
-              Armar estructura
-            </button>
-            <button className="btn secundario" onClick={() => setVerLayout((v) => !v)}>
-              {verLayout ? "Cerrar layout" : "Cargar layout (Excel)"}
-            </button>
-          </>
+          <button
+            className="btn"
+            onClick={() => {
+              setEditId(null);
+              setEditFila(null);
+              setImpDesde("");
+              setImpHasta("");
+              setImpLibre(false);
+              setForm(vaciaEstructura());
+            }}
+          >
+            Armar estructura
+          </button>
         )}
+        {puedeEditar && estructuras.length > 0 && (
+          <button
+            className="btn peligro"
+            title="Borrar TODA la estructura y empezar desde cero, paso a paso"
+            onClick={() => void borrarTodo()}
+          >
+            Borrar estructura ({estructuras.length})
+          </button>
+        )}
+        <button className="btn secundario" onClick={() => setVerFuera((v) => !v)}>
+          {verFuera ? "Cerrar cuentas fuera" : `Fuera de estructura (${fuera.length})`}
+        </button>
       </div>
 
-      {verLayout && puedeCrear && (
-        <div className="panel" style={{ maxWidth: 760 }}>
-          <h3 style={{ marginTop: 0 }}>Cargar el Excel de estructuras</h3>
-          <p style={{ fontSize: "0.88rem", color: "var(--tenue)" }}>
-            Usa el mismo formato que comparte Contaduría (GIRO, NUCLEO DE FRENTES, RAZON SOCIAL,
-            TIPO, EMPRESA, IMPORTE MAXIMO…, bancos y trámites). Las filas que coincidan en razón
-            social + tipo se actualizan; las demás se crean.
+      {verFuera && (
+        <div className="panel" style={{ maxWidth: 860 }}>
+          <h3 style={{ marginTop: 0 }}>Cuentas fuera de la estructura ({fuera.length})</h3>
+          <p style={{ fontSize: "0.85rem", color: "var(--tenue)" }}>
+            Cuentas (flujos o frentes) marcadas que SALIERON de la estructura: ya no están
+            disponibles al armarla, pero se listan aquí y puedes reincorporarlas cuando quieras.
           </p>
-          <div className="barra">
-            <button className="btn secundario" onClick={() => void descargarPlantillaEstructuras()}>
-              Descargar plantilla
-            </button>
-            <label className="btn" style={{ cursor: "pointer" }}>
-              {cargandoLayout ? "Cargando…" : "Elegir archivo (.xlsx / .csv)"}
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt"
-                style={{ display: "none" }}
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void cargarLayout(f);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-          </div>
+          {fuera.length === 0 ? (
+            <p className="nota">Ninguna cuenta está fuera de la estructura.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Cuenta</th>
+                  <th>Banco</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {fuera.map((c) => (
+                  <tr key={c.id}>
+                    <td>
+                      <span className="marca-fuera">FUERA</span> {c.nombre}
+                    </td>
+                    <td>{c.banco || "—"}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {puedeEditar && (
+                        <button
+                          className="btn secundario"
+                          style={{ fontSize: "0.78rem", padding: "0.15rem 0.5rem" }}
+                          onClick={() => void reincorporar(c.id, c.nombre)}
+                        >
+                          Reincorporar
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -9356,18 +9512,27 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
           </p>
           <div className="pasos-estructura">
             <div className="paso-estructura">
-              <h4>1 · Cuenta de Tesorería</h4>
+              <h4>1 · Cuenta de Tesorería (asignación)</h4>
               <div className="rejilla">
                 <div>
-                  <label>Cuenta *</label>
+                  <label>Cuenta a asignar (opcional)</label>
                   <select value={String(form.cuenta_id)} onChange={(e) => elegirCuenta(e.target.value)}>
-                    <option value="">— Selecciona una cuenta —</option>
+                    <option value="">— Sin asignar (puede quedar sin asignar) —</option>
+                    {editId && String(form.cuenta_id) && !cuentas.some((c) => String(c.id) === String(form.cuenta_id)) && (
+                      <option value={String(form.cuenta_id)}>
+                        {editFila?.cuenta ?? `Cuenta #${String(form.cuenta_id)}`} (asignada actualmente)
+                      </option>
+                    )}
                     {cuentas.map((c) => (
                       <option key={c.id} value={String(c.id)}>
                         {c.nombre} ({c.banco})
                       </option>
                     ))}
                   </select>
+                  <small className="nota">
+                    Sólo aparecen las cuentas DISPONIBLES (sin estructura y no marcadas fuera).
+                    Las cuentas ya asignadas a otra estructura no se repiten.
+                  </small>
                 </div>
                 <div>
                   <label>Razón social *</label>
@@ -9593,100 +9758,171 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
                 </th>
               ))}
               <th>BANCOS</th>
-              <th>CUENTA LIGADA</th>
+              <th>ASIGNACIÓN</th>
               <th>ESTATUS</th>
+              {(puedeEditar || puedeEstatus) && <th></th>}
+            </tr>
+            {/* Fila de filtros por encabezado: búsquedas eficientes. */}
+            <tr className="fila-filtros">
+              <th>
+                <input value={fGiro} onChange={(e) => setFGiro(e.target.value)} placeholder="Filtrar…" />
+              </th>
+              <th>
+                <input value={fNucleo} onChange={(e) => setFNucleo(e.target.value)} placeholder="Filtrar…" />
+              </th>
+              <th>
+                <input value={fRazon} onChange={(e) => setFRazon(e.target.value)} placeholder="Filtrar…" />
+              </th>
+              <th>
+                <select value={fTipo} onChange={(e) => setFTipo(e.target.value)}>
+                  <option value="">Todos</option>
+                  <option value="FRENTE">FRENTE</option>
+                  <option value="RB">RB</option>
+                  <option value="FLUJOS">FLUJOS</option>
+                  <option value="SOFOM">SOFOM</option>
+                </select>
+              </th>
+              <th>
+                <input value={fEmpresa} onChange={(e) => setFEmpresa(e.target.value)} placeholder="Filtrar…" />
+              </th>
+              <th>
+                <input value={fImporte} onChange={(e) => setFImporte(e.target.value)} placeholder="Filtrar…" />
+              </th>
+              <th></th>
+              {EXTRAS_ESTRUCTURA.map((x) => (
+                <th key={x} className="col-casilla"></th>
+              ))}
+              <th></th>
+              <th>
+                <select value={fAsig} onChange={(e) => setFAsig(e.target.value)}>
+                  <option value="">Todas</option>
+                  <option value="con">Con cuenta</option>
+                  <option value="sin">Sin asignar</option>
+                </select>
+              </th>
+              <th>
+                <select value={fEstatus} onChange={(e) => setFEstatus(e.target.value)}>
+                  <option value="">Todas</option>
+                  <option value="1">Activas</option>
+                  <option value="0">Inactivas</option>
+                </select>
+              </th>
               {(puedeEditar || puedeEstatus) && <th></th>}
             </tr>
           </thead>
           <tbody>
-            {ordenadas.map((e) => {
-              const esFrente = e.tipo === "FRENTE";
-              const agrupada = !esFrente && !!e.empresa && frentes.some((f) => f.razon_social === e.empresa);
-              const bancosOn = Object.entries(e.bancos)
-                .filter(([, v]) => v === 1)
-                .map(([k]) => k);
-              return (
-                <tr
-                  key={e.id}
-                  className={`${esFrente ? "fila-frente" : ""} ${e.estatus_operacion ? "" : "fila-inactiva"}`}
-                >
-                  <td style={{ whiteSpace: "nowrap" }}>{e.giro || "—"}</td>
-                  <td style={{ maxWidth: 180 }}>{e.nucleo || "—"}</td>
-                  <td style={{ minWidth: 240 }}>
-                    {agrupada && <span className="rama-rb">↳ </span>}
-                    <strong>{e.razon_social}</strong>
-                    {e.observaciones && <div style={{ color: "var(--tenue)", fontSize: "0.78rem" }}>{e.observaciones}</div>}
+            {bloques.flatMap((b, i) => {
+              const tinte = i % 2 === 0 ? "bloque-a" : "bloque-b";
+              const filasBloque = b.frente ? [b.frente, ...b.filas] : b.filas;
+              return [
+                <tr key={`cab-${b.frente?.id ?? "sin"}-${i}`} className={`bloque-cab ${tinte}`}>
+                  <td colSpan={numColumnas}>
+                    {b.frente
+                      ? `BLOQUE ${i + 1} · FRENTE: ${b.frente.razon_social} — ${b.filas.length} flujo(s)${
+                          b.frente.nucleo ? ` · Núcleo: ${b.frente.nucleo}` : ""
+                        }`
+                      : `SIN FRENTE ASIGNADO — ${b.filas.length} fila(s) (asígnalas a un frente, o márcalas fuera)`}
                   </td>
-                  <td>
-                    <span className={`chip chip-${e.tipo.toLowerCase()}`}>{e.tipo}</span>
-                  </td>
-                  <td style={{ maxWidth: 220 }}>{e.empresa || "—"}</td>
-                  <td style={{ whiteSpace: "nowrap" }}>{e.importe_maximo || "—"}</td>
-                  <td style={{ textAlign: "right" }}>{e.total_cuentas}</td>
-                  {EXTRAS_ESTRUCTURA.map((x) => (
-                    <td key={x} className="celda-casilla">
-                      <span className={`casilla ${e.extras[x] === 1 ? "on" : ""}`}>✓</span>
-                    </td>
-                  ))}
-                  <td style={{ maxWidth: 170, fontSize: "0.78rem" }}>
-                    {bancosOn.length ? bancosOn.map((b) => `✓ ${b}`).join("  ") : "—"}
-                  </td>
-                  <td style={{ whiteSpace: "nowrap" }}>{e.cuenta ?? "—"}</td>
-                  <td>
-                    <strong style={{ color: e.estatus_operacion ? "var(--exito, #2e7d32)" : "var(--peligro, #c62828)" }}>
-                      {e.estatus_operacion ? "Activa" : "Inactiva"}
-                    </strong>
-                  </td>
-                  {(puedeEditar || puedeEstatus) && (
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      {puedeEditar && (
-                        <button
-                          className="btn secundario"
-                          onClick={() => {
-                            setEditId(e.id);
-                            const imp = parsearImporteEstructura(String(e.importe_maximo ?? ""));
-                            setImpDesde(imp?.desde ?? "");
-                            setImpHasta(imp?.hasta ?? "");
-                            setImpLibre(!imp && String(e.importe_maximo ?? "").trim().length > 0);
-                            setForm({
-                              ...vaciaEstructura(),
-                              ...e,
-                              estatus_operacion: e.estatus_operacion === 1,
-                              cuenta_id: e.cuenta_id ? String(e.cuenta_id) : "",
-                              total_cuentas: e.total_cuentas ?? 0,
-                              bancos: {
-                                ...Object.fromEntries(BANCOS_ESTRUCTURA.map((b) => [b, false])),
-                                ...Object.fromEntries(
-                                  Object.entries(e.bancos).map(([k, v]) => [k, v === 1])
-                                ),
-                              },
-                              extras: {
-                                ...Object.fromEntries(EXTRAS_ESTRUCTURA.map((x) => [x, false])),
-                                ...Object.fromEntries(
-                                  Object.entries(e.extras).map(([k, v]) => [k, v === 1])
-                                ),
-                              },
-                            });
-                            window.scrollTo({ top: 0, behavior: "smooth" });
-                          }}
-                        >
-                          Editar
-                        </button>
-                      )}{" "}
-                      {puedeEstatus && (
-                        <button className="btn secundario" onClick={() => void cambiarEstatus(e)}>
-                          {e.estatus_operacion ? "Desactivar" : "Activar"}
-                        </button>
+                </tr>,
+                ...filasBloque.map((e) => {
+                  const esFrente = e.tipo === "FRENTE";
+                  const bancosOn = Object.entries(e.bancos)
+                    .filter(([, v]) => v === 1)
+                    .map(([k]) => k);
+                  return (
+                    <tr
+                      key={e.id}
+                      className={`${esFrente ? "fila-frente" : "fila-rb"} ${tinte} ${
+                        e.estatus_operacion ? "" : "fila-inactiva"
+                      }`}
+                    >
+                      <td style={{ whiteSpace: "nowrap" }}>{e.giro || "—"}</td>
+                      <td style={{ maxWidth: 180 }}>{e.nucleo || "—"}</td>
+                      <td style={{ minWidth: 240 }}>
+                        {!esFrente && <span className="rama-rb">↳ </span>}
+                        <strong>{e.razon_social}</strong>
+                        {e.observaciones && <div style={{ color: "var(--tenue)", fontSize: "0.78rem" }}>{e.observaciones}</div>}
+                      </td>
+                      <td>
+                        <span className={`chip chip-${e.tipo.toLowerCase()}`}>{e.tipo}</span>
+                      </td>
+                      <td style={{ maxWidth: 220 }}>{e.empresa || "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{e.importe_maximo || "—"}</td>
+                      <td style={{ textAlign: "right" }}>{e.total_cuentas}</td>
+                      {EXTRAS_ESTRUCTURA.map((x) => (
+                        <td key={x} className="celda-casilla">
+                          <span className={`casilla ${e.extras[x] === 1 ? "on" : ""}`}>✓</span>
+                        </td>
+                      ))}
+                      <td style={{ maxWidth: 170, fontSize: "0.78rem" }}>
+                        {bancosOn.length ? bancosOn.map((bn) => `✓ ${bn}`).join("  ") : "—"}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {e.cuenta ? (
+                          <span title="Cuenta de Tesorería asignada a esta estructura">
+                            {e.cuenta}
+                            {e.cuenta_banco ? ` · ${e.cuenta_banco}` : ""}
+                          </span>
+                        ) : (
+                          <span className="marca-sin-asignar">SIN ASIGNAR</span>
+                        )}
+                      </td>
+                      <td>
+                        <strong style={{ color: e.estatus_operacion ? "var(--exito, #2e7d32)" : "var(--peligro, #c62828)" }}>
+                          {e.estatus_operacion ? "Activa" : "Inactiva"}
+                        </strong>
+                      </td>
+                      {(puedeEditar || puedeEstatus) && (
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          {puedeEditar && (
+                            <button
+                              className="btn secundario"
+                              style={{ fontSize: "0.75rem", padding: "0.1rem 0.4rem" }}
+                              onClick={() => editar(e)}
+                            >
+                              Editar
+                            </button>
+                          )}{" "}
+                          {puedeEstatus && (
+                            <button
+                              className="btn secundario"
+                              style={{ fontSize: "0.75rem", padding: "0.1rem 0.4rem" }}
+                              onClick={() => void cambiarEstatus(e)}
+                            >
+                              {e.estatus_operacion ? "Desactivar" : "Activar"}
+                            </button>
+                          )}{" "}
+                          {puedeEditar && (
+                            <button
+                              className="btn peligro"
+                              style={{ fontSize: "0.75rem", padding: "0.1rem 0.4rem" }}
+                              title="Sacar esta cuenta de la estructura (la cuenta queda marcada fuera)"
+                              onClick={() => void salirDeEstructura(e)}
+                            >
+                              Salir
+                            </button>
+                          )}{" "}
+                          {puedeEditar && (
+                            <button
+                              className="btn peligro"
+                              style={{ fontSize: "0.75rem", padding: "0.1rem 0.4rem" }}
+                              title="Borrar esta fila de la estructura"
+                              onClick={() => void borrarFila(e)}
+                            >
+                              Borrar
+                            </button>
+                          )}
+                        </td>
                       )}
-                    </td>
-                  )}
-                </tr>
-              );
+                    </tr>
+                  );
+                }),
+              ];
             })}
-            {estructuras.length === 0 && (
+            {filtradas.length === 0 && (
               <tr>
                 <td colSpan={numColumnas} className="vacio">
-                  Sin estructuras que coincidan con el filtro.
+                  Sin estructuras que coincidan con los filtros.
                 </td>
               </tr>
             )}
@@ -9694,8 +9930,9 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
         </table>
       </div>
       <small style={{ color: "var(--tenue)" }}>
-        {estructuras.length} estructura(s) listadas. Las estructuras ACTIVAS son las que alimentan
-        el catálogo que ve Operaciones al capturar.
+        {filtradas.length} de {estructuras.length} estructura(s) listada(s). Los BLOQUES agrupan
+        cada FRENTE con todas sus RB (flujos). Las estructuras ACTIVAS son las que alimentan el
+        catálogo que ve Operaciones al capturar.
       </small>
     </>
   );

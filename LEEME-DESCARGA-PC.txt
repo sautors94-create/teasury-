@@ -17,7 +17,48 @@ IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
 regenera automáticamente con un solo comando, ver paso 3).
 
 
-── NOVEDADES DE ESTA VERSIÓN (v9) ─────────────────────────────
+── NOVEDADES DE ESTA VERSIÓN (v10) ────────────────────────────
+
+  · ESTRUCTURA DE CUENTAS — ARMADO 100% A MANO (SIN LAYOUT)
+    Se ELIMINÓ el layout/carga de Excel de estructuras. Toda la
+    estructura se arma a mano, paso a paso, en la sección
+    Estructuras (Contaduría).
+      - BORRAR ESTRUCTURA: botón rojo “Borrar estructura (N)”
+        borra TODA la estructura (con confirmación) para
+        empezar desde cero; cada fila también tiene su botón
+        “Borrar” individual.
+      - BLOQUES MÁS DISTINGUIDOS: cada FRENTE encabeza su
+        BLOQUE con una barra azul con su nombre, número de
+        flujos y núcleo; sus RB (flujos) van debajo con tinte
+        alterno (azul/lila) e identación, así se ve claro
+        dónde empieza y termina cada bloque.
+      - ENCABEZADOS FILTRABLES: bajo cada columna hay casilla
+        de filtro (GIRO, NÚCLEO, RAZÓN SOCIAL, TIPO, EMPRESA,
+        IMPORTE, ASIGNACIÓN, ESTATUS) para búsquedas
+        eficientes al instante.
+      - ASIGNACIÓN DE FRENTES: a cada estructura se le puede
+        ASIGNAR una cuenta de Tesorería (columna ASIGNACIÓN);
+        puede quedar SIN ASIGNAR y se marca en rojo. Las
+        cuentas ya asignadas o marcadas fuera YA NO APARECEN
+        al armar la estructura.
+      - MARCAR LOS QUE SALEN: botón “Salir” en cada fila
+        (flujos o frentes): la fila sale de la estructura y la
+        cuenta queda marcada; se listan en “Fuera de
+        estructura” (botón arriba) con opción de
+        REINCORPORAR.
+      - EN TESORERÍA (Cuentas): nueva columna ESTRUCTURA. Si
+        una cuenta no está en la estructura se ve con la
+        MARCA ROJA “SIN ESTRUCTURA”; si está asignada se ve su
+        frente/tipo; si salió, “FUERA DE ESTRUCTURA”.
+      - LIMPIAR CATÁLOGO: nuevo botón rojo “Limpiar catálogo
+        de cuentas” (sólo el Administrador de Tesorería, con
+        doble confirmación) borra TODAS las cuentas y sus
+        movimientos para subir el catálogo nuevo desde cero
+        (layout de cuentas de 4 columnas: BANCO, NOMBRE,
+        CLAVE, CUENTA CORTA) y después armar la estructura
+        paso a paso.
+
+── NOVEDADES DE LA VERSIÓN ANTERIOR (v9) ──────────────────────
 
   · CARGOS DE TESORERÍA — FUNCIONES ASIGNABLES A LAS PERSONAS
     Las funciones de la Tesorería (validador, altas, confirmador,

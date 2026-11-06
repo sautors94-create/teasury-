@@ -678,6 +678,66 @@ table.fmt-tabla { border-collapse: separate; border-spacing: 0; font-size: 0.8re
 .tabla-estructuras tr.fila-frente td:first-child { border-left: 3px solid var(--primario, #1f4e79); }
 .rama-rb { color: var(--tenue, #6b7686); font-weight: 700; }
 
+/* Fila de filtros por encabezado (una casilla bajo cada columna, estilo Excel). */
+.tabla-estructuras tr.fila-filtros th {
+  padding: 0.25rem 0.3rem;
+  background: #f7f9fc;
+  border-bottom: 2px solid var(--borde, #d7dde6);
+}
+.tabla-estructuras tr.fila-filtros input,
+.tabla-estructuras tr.fila-filtros select {
+  width: 100%;
+  min-width: 70px;
+  max-width: 150px;
+  font-size: 0.75rem;
+  padding: 0.18rem 0.3rem;
+  margin: 0;
+}
+
+/* Bloques de la estructura: cada FRENTE con todas sus RB, bien distinguible.
+   Dos tintes alternados (azul / lila suaves) con cabecera de bloque sólida. */
+.tabla-estructuras tr.bloque-cab td {
+  font-weight: 700;
+  font-size: 0.76rem;
+  letter-spacing: 0.02em;
+  padding: 0.3rem 0.6rem;
+  border-top: 2px solid var(--primario, #1f4e79);
+}
+.tabla-estructuras tr.bloque-cab.bloque-a td { background: #1f4e79; color: #fff; }
+.tabla-estructuras tr.bloque-cab.bloque-b td { background: #4a6d8c; color: #fff; }
+.tabla-estructuras tr.bloque-a.fila-frente td { background: #e7eff8; }
+.tabla-estructuras tr.bloque-a.fila-rb td { background: #f4f8fc; }
+.tabla-estructuras tr.bloque-b.fila-frente td { background: #eee9f7; }
+.tabla-estructuras tr.bloque-b.fila-rb td { background: #f8f5fc; }
+.tabla-estructuras tr.bloque-b.fila-frente td:first-child { border-left-color: #4a6d8c; }
+.tabla-estructuras tr.fila-rb td:first-child { padding-left: 1.5rem; }
+
+/* Marcas: sin asignar / sin estructura (rojo) y fuera de estructura (gris). */
+.marca-sin-asignar,
+.marca-sin-estructura {
+  display: inline-block;
+  background: #fdecec;
+  color: #c62828;
+  border: 1px solid #f2b8b5;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.06rem 0.4rem;
+  white-space: nowrap;
+}
+.marca-fuera {
+  display: inline-block;
+  background: #eceff3;
+  color: #455a64;
+  border: 1px solid #c3ccd4;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.06rem 0.4rem;
+  white-space: nowrap;
+  margin-right: 0.3rem;
+}
+
 /* ---- Cargos de Tesorería (funciones asignables a los tesoreros) ---- */
 .subtitulo { color: var(--tenue, #6b7686); margin: -0.6rem 0 1rem; font-size: 0.9rem; }
 .chip-cargo {

@@ -706,20 +706,39 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ estatus_operacion }),
     }),
-  cargarLayoutEstructuras: (
-    filas: Array<Record<string, unknown>>
-  ) =>
-    solicitar<{
-      creadas: number;
-      actualizadas: number;
-      errores: string[];
-      detalles_creadas: string[];
-      detalles_actualizadas: string[];
-    }>("/estructuras/layout", { method: "POST", body: JSON.stringify({ filas }) }),
-  /** Nombres (sin números) de las cuentas activas para ligar estructuras. */
-  cuentasNombres: () =>
+  /** Borrar UNA fila de la estructura. */
+  borrarEstructura: (id: number) =>
+    solicitar<{ borrada: number }>(`/estructuras/${id}`, { method: "DELETE" }),
+  /** Borrar TODA la estructura (empezar desde cero). */
+  borrarEstructurasTodas: () =>
+    solicitar<{ borradas: number }>("/estructuras?confirmar=BORRAR", { method: "DELETE" }),
+  /** La cuenta de la fila SALIÓ de la estructura (fila borrada + cuenta marcada). */
+  salirEstructura: (id: number) =>
+    solicitar<{ salida: number }>(`/estructuras/${id}/salir`, { method: "POST" }),
+  /** Cuentas marcadas fuera de la estructura (listado con reincorporar). */
+  cuentasFueraEstructura: () =>
     solicitar<{ cuentas: Array<{ id: number; nombre: string; banco: string; tipo: string }> }>(
-      "/cuentas/nombres"
+      "/cuentas/fuera-estructura"
+    ),
+  /** Sacar (fuera=true) o reincorporar (fuera=false) una cuenta de la estructura. */
+  marcarFueraCuenta: (id: number, fuera: boolean) =>
+    solicitar<{ cuenta: { id: number; fuera_estructura: number } }>(`/cuentas/${id}/fuera-estructura`, {
+      method: "PATCH",
+      body: JSON.stringify({ fuera }),
+    }),
+  /** Limpiar el CATÁLOGO COMPLETO de cuentas (pruebas; sólo admin_tesoreria). */
+  limpiarCuentas: () =>
+    solicitar<{ cuentas: number; movimientos: number; mensaje: string }>("/cuentas?confirmar=LIMPIAR", {
+      method: "DELETE",
+    }),
+  /**
+   * Nombres (sin números) de las cuentas activas para ligar estructuras.
+   * `disponibles`: sólo las que aún pueden ligarse (sin estructura y no
+   * marcadas fuera de la estructura).
+   */
+  cuentasNombres: (disponibles?: boolean) =>
+    solicitar<{ cuentas: Array<{ id: number; nombre: string; banco: string; tipo: string }> }>(
+      `/cuentas/nombres${disponibles ? "?disponibles=1" : ""}`
     ),
 };
 

@@ -14,7 +14,10 @@ import { abrirBase } from "../src/db.js";
  *     (sólo operaciones con timbrar=1), detalle sólo de esas operaciones.
  *   · Estructuras de cuentas (formato Ejercicio 2026): semilla del catálogo,
  *     CRUD por Contaduría, estatus (activa/inactiva) por admin_tesoreria,
- *     carga por layout y catálogo activo para la captura de Operaciones.
+ *     armado A MANO (sin layout): borrar una fila o toda la estructura,
+ *     marcar cuentas que salen de la estructura (listado + reincorporar) y
+ *     catálogo activo para la captura de Operaciones.
+ *   · Limpiar el catálogo completo de cuentas (pruebas; admin_tesoreria).
  */
 let db: Database;
 let app: ReturnType<typeof crearApp>;
@@ -330,53 +333,136 @@ describe("Estructuras de cuentas (formato Contaduría)", () => {
     expect(ids).not.toContain(id);
   });
 
-  it("carga por layout: crea las nuevas y actualiza las existentes", async () => {
+  it("salir de la estructura marca la cuenta y la saca de disponibles", async () => {
     const tCon = await login("1contaduria", "1contaduria");
-    const res = await request(app)
-      .post("/api/estructuras/layout")
+    const tTeso = await login("admin_tesoreria", "admin_tesoreria");
+
+    // La cuenta FRENTES 01 se liga a una estructura nueva.
+    const idCuenta = await cuentaId(tTeso, "FRENTES 01");
+    const creada = await request(app)
+      .post("/api/estructuras")
       .set(auth(tCon))
       .send({
-        filas: [
-          {
-            giro: "SISTEMAS",
-            nucleo: "SISTEMAS",
-            razon_social: "NUEVA LAYOUT SA DE CV",
-            tipo: "RB",
-            empresa: "CARDENAS CONSULTORES EN ADMINISTRACION SRL DE CV",
-            importe_maximo: "de un 25 a un 35 % del flujo",
-            estatus_operacion: 1,
-            bancos: { JS: 1, E_PLATA: 1 },
-            total_cuentas: 2,
-            extras: {},
-          },
-          {
-            razon_social: "CARDENAS CONSULTORES EN ADMINISTRACION SRL DE CV",
-            tipo: "FRENTE",
-            empresa: "CARDENAS CONSULTORES EN ADMINISTRACION SRL DE CV",
-            importe_maximo: "SIN LÍMITE PRUEBAS",
-          },
-        ],
+        razon_social: "SALIDA PRUEBAS SA DE CV",
+        tipo: "FRENTE",
+        giro: "PRUEBAS",
+        nucleo: "PRUEBAS",
+        empresa: "SALIDA PRUEBAS SA DE CV",
+        importe_maximo: "de un 20 a un 30 % del flujo",
+        cuenta_id: idCuenta,
       });
-    expect(res.status).toBe(201);
-    expect(res.body.creadas).toBe(1);
-    expect(res.body.actualizadas).toBe(1);
+    expect(creada.status).toBe(201);
+    const idEstructura = creada.body.estructura.id as number;
 
-    // La existente quedó actualizada (misma razón social + tipo).
+    // Ya NO está disponible para ligarse de nuevo.
+    const dispo = await request(app).get("/api/cuentas/nombres?disponibles=1").set(auth(tCon));
+    expect(dispo.status).toBe(200);
+    expect((dispo.body.cuentas as Array<{ id: number }>).some((c) => c.id === idCuenta)).toBe(false);
+
+    // GET /cuentas expone el estado de estructura para Tesorería.
+    const lista = await request(app).get("/api/cuentas").set(auth(tTeso));
+    const fila = (lista.body.cuentas as Array<Record<string, unknown>>).find((c) => c.id === idCuenta);
+    expect(fila?.estructura_razon).toBe("SALIDA PRUEBAS SA DE CV");
+    expect(fila?.estructura_tipo).toBe("FRENTE");
+    expect(fila?.fuera_estructura).toBe(0);
+
+    // Contaduría la saca de la estructura: fila borrada + cuenta marcada.
+    const salida = await request(app).post(`/api/estructuras/${idEstructura}/salir`).set(auth(tCon));
+    expect(salida.status).toBe(200);
+    const queda = await request(app).get("/api/estructuras?q=SALIDA PRUEBAS").set(auth(tTeso));
+    expect(queda.body.total).toBe(0);
+
+    // La cuenta aparece en el listado de cuentas fuera de la estructura…
+    const fuera = await request(app).get("/api/cuentas/fuera-estructura").set(auth(tCon));
+    expect(fuera.status).toBe(200);
+    expect((fuera.body.cuentas as Array<{ id: number }>).some((c) => c.id === idCuenta)).toBe(true);
+
+    // …y sigue sin estar disponible hasta reincorporarla.
+    const dispo2 = await request(app).get("/api/cuentas/nombres?disponibles=1").set(auth(tCon));
+    expect((dispo2.body.cuentas as Array<{ id: number }>).some((c) => c.id === idCuenta)).toBe(false);
+
+    const re = await request(app)
+      .patch(`/api/cuentas/${idCuenta}/fuera-estructura`)
+      .set(auth(tTeso))
+      .send({ fuera: false });
+    expect(re.status).toBe(200);
+    const dispo3 = await request(app).get("/api/cuentas/nombres?disponibles=1").set(auth(tCon));
+    expect((dispo3.body.cuentas as Array<{ id: number }>).some((c) => c.id === idCuenta)).toBe(true);
+
+    // Un rol sin permiso no marca cuentas.
+    const tOp = await login("operador", "operador");
+    const prohibido = await request(app)
+      .patch(`/api/cuentas/${idCuenta}/fuera-estructura`)
+      .set(auth(tOp))
+      .send({ fuera: true });
+    expect(prohibido.status).toBe(403);
+  });
+
+  it("borrar estructura: una fila y toda la estructura (roles permitidos)", async () => {
+    const tCon = await login("1contaduria", "1contaduria");
     const tTeso = await login("admin_tesoreria", "admin_tesoreria");
-    const busca = await request(app)
-      .get("/api/estructuras?q=CARDENAS CONSULTORES EN ADMINISTRACION")
-      .set(auth(tTeso));
-    const filas = busca.body.estructuras as Array<{ importe_maximo: string; tipo: string }>;
-    expect(filas.some((f) => f.importe_maximo === "SIN LÍMITE PRUEBAS")).toBe(true);
+    const tTes = await login("tesoreria", "tesoreria");
 
-    // Fila inválida se reporta sin romper el lote.
-    const mala = await request(app)
-      .post("/api/estructuras/layout")
+    const creada = await request(app)
+      .post("/api/estructuras")
       .set(auth(tCon))
-      .send({ filas: [{ razon_social: "X", tipo: "OTRO" }] });
-    expect(mala.status).toBe(201);
-    expect(mala.body.creadas).toBe(0);
-    expect((mala.body.errores as string[]).length).toBe(1);
+      .send({
+        razon_social: "BORRABLE SA DE CV",
+        tipo: "RB",
+        empresa: "CARDENAS CONSULTORES EN ADMINISTRACION SRL DE CV",
+      });
+    expect(creada.status).toBe(201);
+    const id = creada.body.estructura.id as number;
+
+    // Un tesorero común no borra.
+    const ajeno = await request(app).delete(`/api/estructuras/${id}`).set(auth(tTes));
+    expect(ajeno.status).toBe(403);
+
+    // admin_tesoreria borra UNA fila.
+    const uno = await request(app).delete(`/api/estructuras/${id}`).set(auth(tTeso));
+    expect(uno.status).toBe(200);
+    expect(uno.body.borrada).toBe(1);
+
+    // Borrar TODA la estructura pide confirmación y la respeta.
+    const sinConf = await request(app).delete("/api/estructuras").set(auth(tCon));
+    expect(sinConf.status).toBe(400);
+    const todas = await request(app)
+      .delete("/api/estructuras")
+      .set(auth(tCon))
+      .query({ confirmar: "BORRAR" });
+    expect(todas.status).toBe(200);
+    expect(todas.body.borradas).toBeGreaterThan(100);
+    const restante = await request(app).get("/api/estructuras").set(auth(tTeso));
+    expect(restante.body.total).toBe(0);
+  });
+
+  it("limpiar el catálogo completo de cuentas (pruebas) con confirmación", async () => {
+    const tTeso = await login("admin_tesoreria", "admin_tesoreria");
+    const tCon = await login("1contaduria", "1contaduria");
+
+    // Sin confirmación no borra nada.
+    const sinConf = await request(app).delete("/api/cuentas").set(auth(tTeso));
+    expect(sinConf.status).toBe(400);
+
+    // Contaduría tampoco puede limpiar el catálogo (sólo admin_tesoreria).
+    const ajeno = await request(app)
+      .delete("/api/cuentas")
+      .set(auth(tCon))
+      .query({ confirmar: "LIMPIAR" });
+    expect(ajeno.status).toBe(403);
+
+    // Con confirmación borra todo el catálogo (con sus movimientos/asignaciones).
+    const antes = await request(app).get("/api/cuentas").set(auth(tTeso));
+    const total = (antes.body.cuentas as unknown[]).length;
+    expect(total).toBeGreaterThan(0);
+    const r = await request(app)
+      .delete("/api/cuentas")
+      .set(auth(tTeso))
+      .query({ confirmar: "LIMPIAR" });
+    expect(r.status).toBe(200);
+    expect(r.body.cuentas).toBe(total);
+    const despues = await request(app).get("/api/cuentas").set(auth(tTeso));
+    expect((despues.body.cuentas as unknown[]).length).toBe(0);
   });
 
   it("cuentas/nombres para ligar estructuras no expone números bancarios", async () => {

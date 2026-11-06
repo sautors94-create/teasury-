@@ -880,6 +880,10 @@ CREATE TABLE IF NOT EXISTS cuentas (
   -- Fase 13: visible en el listado de pagadoras de los operadores (Tesorería
   -- la controla; todas nacen visibles).
   visible_operador INTEGER NOT NULL DEFAULT 1,
+  -- Estructuras: 1 = la cuenta SALIÓ de la estructura (marca de Contaduría).
+  -- Ya no aparece al armar la estructura, pero sí en el listado de cuentas
+  -- fuera de la estructura (con opción de reincorporar).
+  fuera_estructura INTEGER NOT NULL DEFAULT 0,
   creado_en       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -1167,6 +1171,7 @@ export function abrirBase(ruta: string = RUTA_DB): Database.Database {
   migrarFase13(db);
   migrarFase14(db);
   migrarFase15(db);
+  migrarFueraEstructura(db);
   sembrarUsuarios(db);
   asegurarUsuariosBase(db);
   sembrarCatalogosYParametros(db);
@@ -1262,6 +1267,17 @@ function migrarFase15(db: Database.Database): void {
     db.exec("ALTER TABLE altas_bancarias ADD COLUMN clabe TEXT NOT NULL DEFAULT ''");
     console.log("[Migración] Fase 15: altas_bancarias.clabe añadida");
   }
+}
+
+/**
+ * Estructuras — marca 'fuera de la estructura' sobre cuentas. Idempotente y
+ * conservando datos (para bases creadas antes de esta versión).
+ */
+function migrarFueraEstructura(db: Database.Database): void {
+  const cols = (db.pragma("table_info(cuentas)") as Array<{ name: string }>).map((c) => c.name);
+  if (!cols.length || cols.includes("fuera_estructura")) return;
+  db.exec("ALTER TABLE cuentas ADD COLUMN fuera_estructura INTEGER NOT NULL DEFAULT 0");
+  console.log("[Migración] cuentas.fuera_estructura añadida");
 }
 
 /** Fase 15 — siembra el catálogo SPEI (92 bancos) una sola vez. */
