@@ -67,11 +67,57 @@ export type EstadoOperacion =
 
 export type TipoOperacion = "pago" | "cobro" | "financiamiento" | "flujo" | "pago_especial";
 
+/**
+ * Cargos de Tesorería (funciones asignables): un tesorero puede tener uno o
+ * varios cargos y cada cargo puede recaer en una o varias personas. El cargo
+ * otorga las mismas funciones que el rol individual equivalente:
+ *   validador   → funciones de Validador de Tesorería (rol 'validador_tesoreria')
+ *   altas       → funciones de Tesorería de Altas (rol 'altas')
+ *   confirmador → funciones de Confirmador de Depósitos (rol 'confirmador')
+ *   fondeador   → funciones de Tesorero Fondeador (rol 'fondeador')
+ */
+export type Cargo = "validador" | "altas" | "confirmador" | "fondeador";
+
+export const CARGOS: Cargo[] = ["validador", "altas", "confirmador", "fondeador"];
+
+/** Cargo → rol que otorga (equivalencia usada por requiereRol y la visibilidad). */
+export const CARGO_A_ROL: Record<Cargo, Rol> = {
+  validador: "validador_tesoreria",
+  altas: "altas",
+  confirmador: "confirmador",
+  fondeador: "fondeador",
+};
+
+/** Roles del personal de Tesorería: a ellos se les pueden asignar cargos. */
+export const ROLES_TESORERIA: Rol[] = [
+  "tesoreria",
+  "validador_tesoreria",
+  "confirmador",
+  "fondeador",
+  "altas",
+  "admin_tesoreria",
+];
+
+/** Lee la columna `cargos` (JSON) de forma tolerante: nunca falla y sólo
+ *  devuelve cargos válidos. */
+export function parsearCargos(texto: string | null | undefined): Cargo[] {
+  if (!texto) return [];
+  try {
+    const bruto = JSON.parse(texto);
+    if (!Array.isArray(bruto)) return [];
+    return bruto.filter((c): c is Cargo => CARGOS.includes(c));
+  } catch {
+    return [];
+  }
+}
+
 export interface Usuario {
   id: number;
   username: string;
   nombre: string;
   rol: Rol;
+  /** Cargos de Tesorería asignados (0 o más). */
+  cargos: Cargo[];
 }
 
 export interface Operacion {
@@ -481,6 +527,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   password_hash TEXT NOT NULL,
   nombre        TEXT NOT NULL,
   rol           TEXT NOT NULL CHECK (rol IN ('admin','admin_operaciones','admin_validacion','admin_tesoreria','operacion','validacion','validador_tesoreria','confirmador','tesoreria','fondeador','altas','direccion','auditoria','contaduria')),
+  cargos        TEXT NOT NULL DEFAULT '[]',
   activo        INTEGER NOT NULL DEFAULT 1
 );
 
@@ -1110,6 +1157,7 @@ export function abrirBase(ruta: string = RUTA_DB): Database.Database {
   migrarDispersionesRfc(db);
   migrarUsuarios(db);
   migrarRolContaduria(db);
+  migrarCargos(db);
   migrarOperacionesCliente(db);
   migrarCapturaFlujo(db);
   migrarRespaldosFinanciamientos(db);
@@ -1299,6 +1347,33 @@ function migrarUsuarios(db: Database.Database): void {
     db.pragma("legacy_alter_table = OFF");
     db.pragma("foreign_keys = ON");
     throw e;
+  }
+}
+
+/**
+ * Cargos de Tesorería: añade la columna `cargos` (JSON) a bases creadas antes
+ * de esta fase y deja sembrado el cargo natural de cada rol tesorero existente
+ * (val_tesoreria→validador, confirmador→confirmador, fondeador→fondeador,
+ * altas→altas). Idempotente: sólo toca filas con cargos = '[]'.
+ */
+function migrarCargos(db: Database.Database): void {
+  const cols = (db.pragma("table_info(usuarios)") as Array<{ name: string }>).map((c) => c.name);
+  if (cols.length && !cols.includes("cargos")) {
+    db.exec("ALTER TABLE usuarios ADD COLUMN cargos TEXT NOT NULL DEFAULT '[]'");
+    console.log("[Migración] usuarios.cargos añadida (cargos de Tesorería)");
+  }
+  const natural: Array<[rol: Rol, cargo: Cargo]> = [
+    ["validador_tesoreria", "validador"],
+    ["confirmador", "confirmador"],
+    ["fondeador", "fondeador"],
+    ["altas", "altas"],
+  ];
+  const backfill = db.prepare(
+    "UPDATE usuarios SET cargos = ? WHERE rol = ? AND cargos = '[]'"
+  );
+  for (const [rol, cargo] of natural) {
+    const r = backfill.run(JSON.stringify([cargo]), rol);
+    if (r.changes > 0) console.log(`[Migración] cargo '${cargo}' sembrado a usuarios con rol '${rol}'`);
   }
 }
 
@@ -1855,27 +1930,27 @@ function sembrarUsuarios(db: Database.Database): void {
   const cuenta = db.prepare("SELECT COUNT(*) AS n FROM usuarios").get() as { n: number };
   if (cuenta.n > 0) return;
   const insertar = db.prepare(
-    "INSERT INTO usuarios (username, password_hash, nombre, rol) VALUES (?, ?, ?, ?)"
+    "INSERT INTO usuarios (username, password_hash, nombre, rol, cargos) VALUES (?, ?, ?, ?, ?)"
   );
-  const semilla: Array<[string, string, Rol]> = [
-    ["admin", "Administrador del Sistema", "admin"],
-    ["admin_ops", "Administrador de Operaciones", "admin_operaciones"],
-    ["admin_validacion", "Administrador de Validación", "admin_validacion"],
-    ["admin_tesoreria", "Administrador de Tesorería", "admin_tesoreria"],
-    ["operador", "Ejecutivo de Operaciones", "operacion"],
-    ["validador", "Validador de Operaciones", "validacion"],
-    ["val_tesoreria", "Validador de Tesorería", "validador_tesoreria"],
-    ["confirmador", "Confirmador de Depósitos", "confirmador"],
-    ["tesoreria", "Analista de Tesorería", "tesoreria"],
-    ["fondeador", "Tesorero Fondeador", "fondeador"],
-    ["altas", "Tesorería de Altas", "altas"],
-    ["direccion", "Dirección", "direccion"],
-    ["auditor", "Auditoría", "auditoria"],
-    ["1contaduria", "Contaduría (timbrado y estructuras)", "contaduria"],
+  const semilla: Array<[string, string, Rol, Cargo[]]> = [
+    ["admin", "Administrador del Sistema", "admin", []],
+    ["admin_ops", "Administrador de Operaciones", "admin_operaciones", []],
+    ["admin_validacion", "Administrador de Validación", "admin_validacion", []],
+    ["admin_tesoreria", "Administrador de Tesorería", "admin_tesoreria", []],
+    ["operador", "Ejecutivo de Operaciones", "operacion", []],
+    ["validador", "Validador de Operaciones", "validacion", []],
+    ["val_tesoreria", "Validador de Tesorería", "validador_tesoreria", ["validador"]],
+    ["confirmador", "Confirmador de Depósitos", "confirmador", ["confirmador"]],
+    ["tesoreria", "Analista de Tesorería", "tesoreria", []],
+    ["fondeador", "Tesorero Fondeador", "fondeador", ["fondeador"]],
+    ["altas", "Tesorería de Altas", "altas", ["altas"]],
+    ["direccion", "Dirección", "direccion", []],
+    ["auditor", "Auditoría", "auditoria", []],
+    ["1contaduria", "Contaduría (timbrado y estructuras)", "contaduria", []],
   ];
-  for (const [username, nombre, rol] of semilla) {
+  for (const [username, nombre, rol, cargos] of semilla) {
     // Password por defecto igual al username (cambiar en producción).
-    insertar.run(username, bcrypt.hashSync(username, 10), nombre, rol);
+    insertar.run(username, bcrypt.hashSync(username, 10), nombre, rol, JSON.stringify(cargos));
   }
 }
 
@@ -1885,21 +1960,21 @@ function sembrarUsuarios(db: Database.Database): void {
  */
 function asegurarUsuariosBase(db: Database.Database): void {
   const insertar = db.prepare(
-    "INSERT OR IGNORE INTO usuarios (username, password_hash, nombre, rol) VALUES (?, ?, ?, ?)"
+    "INSERT OR IGNORE INTO usuarios (username, password_hash, nombre, rol, cargos) VALUES (?, ?, ?, ?, ?)"
   );
-  const base: Array<[string, string, Rol]> = [
-    ["admin", "Administrador del Sistema", "admin"],
-    ["admin_ops", "Administrador de Operaciones", "admin_operaciones"],
-    ["admin_validacion", "Administrador de Validación", "admin_validacion"],
-    ["admin_tesoreria", "Administrador de Tesorería", "admin_tesoreria"],
-    ["val_tesoreria", "Validador de Tesorería", "validador_tesoreria"],
-    ["confirmador", "Confirmador de Depósitos", "confirmador"],
-    ["fondeador", "Tesorero Fondeador", "fondeador"],
-    ["altas", "Tesorería de Altas", "altas"],
-    ["1contaduria", "Contaduría (timbrado y estructuras)", "contaduria"],
+  const base: Array<[string, string, Rol, Cargo[]]> = [
+    ["admin", "Administrador del Sistema", "admin", []],
+    ["admin_ops", "Administrador de Operaciones", "admin_operaciones", []],
+    ["admin_validacion", "Administrador de Validación", "admin_validacion", []],
+    ["admin_tesoreria", "Administrador de Tesorería", "admin_tesoreria", []],
+    ["val_tesoreria", "Validador de Tesorería", "validador_tesoreria", ["validador"]],
+    ["confirmador", "Confirmador de Depósitos", "confirmador", ["confirmador"]],
+    ["fondeador", "Tesorero Fondeador", "fondeador", ["fondeador"]],
+    ["altas", "Tesorería de Altas", "altas", ["altas"]],
+    ["1contaduria", "Contaduría (timbrado y estructuras)", "contaduria", []],
   ];
-  for (const [username, nombre, rol] of base) {
-    insertar.run(username, bcrypt.hashSync(username, 10), nombre, rol);
+  for (const [username, nombre, rol, cargos] of base) {
+    insertar.run(username, bcrypt.hashSync(username, 10), nombre, rol, JSON.stringify(cargos));
   }
 }
 

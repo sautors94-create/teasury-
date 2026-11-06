@@ -677,3 +677,24 @@ table.fmt-tabla { border-collapse: separate; border-spacing: 0; font-size: 0.8re
 .tabla-estructuras tr.fila-frente td { background: #f2f6fb; }
 .tabla-estructuras tr.fila-frente td:first-child { border-left: 3px solid var(--primario, #1f4e79); }
 .rama-rb { color: var(--tenue, #6b7686); font-weight: 700; }
+
+/* ---- Cargos de Tesorería (funciones asignables a los tesoreros) ---- */
+.subtitulo { color: var(--tenue, #6b7686); margin: -0.6rem 0 1rem; font-size: 0.9rem; }
+.chip-cargo {
+  display: inline-block; padding: 0.05rem 0.45rem; margin: 0.1rem 0.15rem 0.1rem 0;
+  border-radius: 8px; background: #eef4fb; border: 1px solid #c5d5ea;
+  color: var(--primario, #1f4e79); font-size: 0.72rem; font-weight: 700; font-style: normal;
+  white-space: nowrap;
+}
+.sidebar .usuario .usuario-rol { display: block; opacity: 0.85; font-size: 0.8rem; margin-top: 0.15rem; }
+.sidebar .usuario .usuario-cargos { display: flex; flex-wrap: wrap; margin-top: 0.3rem; }
+.sidebar .usuario .chip-cargo {
+  background: rgba(255, 255, 255, 0.16); border-color: rgba(255, 255, 255, 0.28); color: #fff;
+}
+.fila-casillas { display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: center; }
+.casilla-cargo {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.9rem; cursor: pointer;
+}
+.casilla-cargo input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }
+.panel table input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }

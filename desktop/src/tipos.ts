@@ -31,6 +31,53 @@ export const ETIQUETAS_ROL: Record<Rol, string> = {
   contaduria: "Contaduría (timbrado y estructuras)",
 };
 
+// ---- Cargos de Tesorería (funciones asignables) ----
+// Todos son tesoreros; cada persona puede tener uno o varios cargos y cada
+// cargo puede recaer en una o varias personas. El cargo otorga las mismas
+// funciones que su rol equivalente.
+
+export type Cargo = "validador" | "altas" | "confirmador" | "fondeador";
+
+export const CARGOS: Cargo[] = ["validador", "altas", "confirmador", "fondeador"];
+
+export const ETIQUETAS_CARGO: Record<Cargo, string> = {
+  validador: "Validador",
+  altas: "Altas",
+  confirmador: "Confirmador",
+  fondeador: "Fondeador",
+};
+
+/** Cargo que implica de forma natural cada rol tesorero (equivalencia). */
+const CARGO_POR_ROL: Partial<Record<Rol, Cargo>> = {
+  validador_tesoreria: "validador",
+  altas: "altas",
+  confirmador: "confirmador",
+  fondeador: "fondeador",
+};
+
+/** Cargos totales de un usuario: los asignados más el que implica su rol. */
+export function cargosDe(usuario: Usuario): Cargo[] {
+  const set = new Set<Cargo>(usuario.cargos ?? []);
+  const implicito = CARGO_POR_ROL[usuario.rol];
+  if (implicito) set.add(implicito);
+  return [...set];
+}
+
+/** ¿Tiene el usuario este cargo (asignado o por su rol)? */
+export function tieneCargo(usuario: Usuario, cargo: Cargo): boolean {
+  return cargosDe(usuario).includes(cargo);
+}
+
+/** Roles del personal de Tesorería: a ellos se les pueden asignar cargos. */
+export const ROLES_TESORERIA: Rol[] = [
+  "tesoreria",
+  "validador_tesoreria",
+  "confirmador",
+  "fondeador",
+  "altas",
+  "admin_tesoreria",
+];
+
 // ---- Tipos de cuenta de Tesorería (sólo el Administrador crea cuentas) ----
 
 export type TipoCuenta =
@@ -74,6 +121,8 @@ export interface Usuario {
   username: string;
   nombre: string;
   rol: Rol;
+  /** Cargos de Tesorería asignados (0 o más). */
+  cargos?: Cargo[];
 }
 
 export interface Operacion {
@@ -477,6 +526,7 @@ export interface UsuarioAdmin {
   username: string;
   nombre: string;
   rol: Rol;
+  cargos: Cargo[];
   activo: number;
 }
 

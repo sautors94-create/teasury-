@@ -16,6 +16,11 @@ import {
   ETIQUETAS_ESTADO,
   ETIQUETAS_ROL,
   ETIQUETAS_TIPO_CUENTA,
+  ETIQUETAS_CARGO,
+  CARGOS,
+  ROLES_TESORERIA,
+  cargosDe,
+  tieneCargo,
   MEDIOS_PAGO,
   MONEDAS_COMUNES,
   TIPOS_CUENTA,
@@ -23,6 +28,7 @@ import {
   EXTRAS_ESTRUCTURA,
   type Broker,
   type CalculosFlujo,
+  type Cargo,
   type DetalleOperacion,
   type Dispersion,
   type Estado,
@@ -460,6 +466,7 @@ type Vista =
   | "captura"
   | "clientes"
   | "usuarios"
+  | "cargos"
   | "config"
   | "pagos"
   | "cuentas"
@@ -533,7 +540,7 @@ export default function App() {
             Calidad
           </button>
         )}
-        {usuario.rol === "fondeador" && (
+        {(usuario.rol === "fondeador" || tieneCargo(usuario, "fondeador")) && (
           <button className={vista === "fondeo" ? "activo" : ""} onClick={() => setVista("fondeo")}>
             Fondeo
           </button>
@@ -565,21 +572,27 @@ export default function App() {
             Estructuras
           </button>
         )}
-        {["operacion", "altas", "admin_tesoreria", "admin", "admin_operaciones", "fondeador", "validador_tesoreria", "direccion", "auditoria"].includes(
+        {(["operacion", "altas", "admin_tesoreria", "admin", "admin_operaciones", "fondeador", "validador_tesoreria", "direccion", "auditoria"].includes(
           usuario.rol
-        ) && (
+        ) ||
+          tieneCargo(usuario, "altas")) && (
           <button className={vista === "altas" ? "activo" : ""} onClick={() => setVista("altas")}>
             Altas bancarias
           </button>
         )}
-        {usuario.rol === "confirmador" && (
+        {(usuario.rol === "confirmador" || tieneCargo(usuario, "confirmador")) && (
           <button className={vista === "confirmacion" ? "activo" : ""} onClick={() => setVista("confirmacion")}>
             Confirmación de depósitos
           </button>
         )}
-        {(usuario.rol === "admin_tesoreria" || usuario.rol === "validador_tesoreria") && (
+        {(usuario.rol === "admin_tesoreria" || usuario.rol === "validador_tesoreria" || tieneCargo(usuario, "validador")) && (
           <button className={vista === "tesoreria" ? "activo" : ""} onClick={() => setVista("tesoreria")}>
             Tesorería
+          </button>
+        )}
+        {(usuario.rol === "admin" || usuario.rol === "admin_tesoreria") && (
+          <button className={vista === "cargos" ? "activo" : ""} onClick={() => setVista("cargos")}>
+            Cargos
           </button>
         )}
         {usuario.rol === "admin" && (
@@ -602,7 +615,8 @@ export default function App() {
           usuario.rol === "admin_tesoreria" ||
           usuario.rol === "validador_tesoreria" ||
           usuario.rol === "direccion" ||
-          usuario.rol === "auditoria"
+          usuario.rol === "auditoria" ||
+          tieneCargo(usuario, "validador")
         ) && (
           <button className={vista === "cuentas" ? "activo" : ""} onClick={() => setVista("cuentas")}>
             Cuentas
@@ -621,7 +635,16 @@ export default function App() {
         </nav>
         <div className="usuario">
           <strong>{usuario.nombre}</strong>
-          Rol: {usuario.rol}
+          <span className="usuario-rol">{ETIQUETAS_ROL[usuario.rol]}</span>
+          {cargosDe(usuario).length > 0 && (
+            <span className="usuario-cargos">
+              {cargosDe(usuario).map((c) => (
+                <em key={c} className="chip-cargo">
+                  {ETIQUETAS_CARGO[c]}
+                </em>
+              ))}
+            </span>
+          )}
           <button onClick={cerrarSesion}>Cerrar sesión</button>
         </div>
       </aside>
@@ -643,6 +666,7 @@ export default function App() {
         )}
         {vista === "clientes" && <VistaClientes usuario={usuario} />}
         {vista === "usuarios" && <VistaUsuarios actual={usuario} />}
+        {vista === "cargos" && <VistaCargos actual={usuario} />}
         {vista === "config" && <VistaConfig />}
         {vista === "pagos" && <VistaPagos />}
         {vista === "cuentas" && <VistaCuentas />}
@@ -1138,7 +1162,7 @@ function VistaOperaciones({
                   Enviar a Calidad
                 </button>
               )}
-              {usuario.rol === "fondeador" && op.estado === "aprobada" && !op.liberada_en && (
+              {(usuario.rol === "fondeador" || tieneCargo(usuario, "fondeador")) && op.estado === "aprobada" && !op.liberada_en && (
                 <button
                   className="btn exito"
                   onClick={() => void accion(api.liberar(op.id), "Operación liberada a Tesorería.")}
@@ -1147,7 +1171,7 @@ function VistaOperaciones({
                 </button>
               )}
               {((usuario.rol === "operacion" && ["borrador", "observada"].includes(op.estado)) ||
-                ((usuario.rol === "tesoreria" || usuario.rol === "admin_tesoreria" || usuario.rol === "fondeador") &&
+                ((usuario.rol === "tesoreria" || usuario.rol === "admin_tesoreria" || tieneCargo(usuario, "fondeador")) &&
                   !["pagada", "cancelada"].includes(op.estado) &&
                   !(op.estado === "en_pago" && detalle.totales_pago.total_dispersado > 0.005))) && (
                 <button
@@ -4628,7 +4652,13 @@ function VistaUsuarios({ actual }: { actual: Usuario }) {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
   const [error, setError] = useState("");
   const [mensaje, setMensaje] = useState("");
-  const [alta, setAlta] = useState({ username: "", nombre: "", rol: "operacion" as Rol, password: "" });
+  const [alta, setAlta] = useState({
+    username: "",
+    nombre: "",
+    rol: "operacion" as Rol,
+    password: "",
+    cargos: [] as Cargo[],
+  });
 
   const cargar = () =>
     api
@@ -4639,6 +4669,13 @@ function VistaUsuarios({ actual }: { actual: Usuario }) {
   useEffect(() => {
     cargar();
   }, []);
+
+  const rolTesorero = ROLES_TESORERIA.includes(alta.rol);
+  const alternarCargoAlta = (c: Cargo) =>
+    setAlta((a) => ({
+      ...a,
+      cargos: a.cargos.includes(c) ? a.cargos.filter((x) => x !== c) : [...a.cargos, c],
+    }));
 
   return (
     <>
@@ -4653,6 +4690,7 @@ function VistaUsuarios({ actual }: { actual: Usuario }) {
               <th>Usuario</th>
               <th>Nombre</th>
               <th>Rol</th>
+              <th>Cargos</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -4683,6 +4721,17 @@ function VistaUsuarios({ actual }: { actual: Usuario }) {
                       </option>
                     ))}
                   </select>
+                </td>
+                <td>
+                  {u.cargos?.length ? (
+                    u.cargos.map((c) => (
+                      <em key={c} className="chip-cargo">
+                        {ETIQUETAS_CARGO[c]}
+                      </em>
+                    ))
+                  ) : (
+                    <span style={{ color: "var(--tenue)" }}>—</span>
+                  )}
                 </td>
                 <td>{u.activo === 1 ? "Activo" : "Desactivado"}</td>
                 <td>
@@ -4747,7 +4796,7 @@ function VistaUsuarios({ actual }: { actual: Usuario }) {
             ))}
             {usuarios.length === 0 && (
               <tr>
-                <td colSpan={5} className="vacio">
+                <td colSpan={6} className="vacio">
                   Sin usuarios.
                 </td>
               </tr>
@@ -4762,9 +4811,12 @@ function VistaUsuarios({ actual }: { actual: Usuario }) {
         onSubmit={async (e) => {
           e.preventDefault();
           try {
-            await api.crearUsuario(alta);
+            await api.crearUsuario({
+              ...alta,
+              cargos: rolTesorero ? alta.cargos : undefined,
+            });
             setMensaje(`Usuario '${alta.username}' creado. La contraseña inicial es la que capturaste.`);
-            setAlta({ username: "", nombre: "", rol: "operacion", password: "" });
+            setAlta({ username: "", nombre: "", rol: "operacion", password: "", cargos: [] });
             setError("");
             cargar();
           } catch (err) {
@@ -4802,6 +4854,25 @@ function VistaUsuarios({ actual }: { actual: Usuario }) {
             />
           </div>
         </div>
+        {rolTesorero && (
+          <div style={{ margin: "0.6rem 0" }}>
+            <label style={{ display: "block", marginBottom: "0.3rem" }}>
+              Cargos de Tesorería (opcional, uno o varios)
+            </label>
+            <div className="fila-casillas">
+              {CARGOS.map((c) => (
+                <label key={c} className="casilla-cargo">
+                  <input
+                    type="checkbox"
+                    checked={alta.cargos.includes(c)}
+                    onChange={() => alternarCargoAlta(c)}
+                  />
+                  {ETIQUETAS_CARGO[c]}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         <button className="btn">Crear usuario</button>
       </form>
       <p style={{ color: "var(--tenue)", fontSize: "0.82rem" }}>
@@ -4813,6 +4884,143 @@ function VistaUsuarios({ actual }: { actual: Usuario }) {
         registrada (operaciones, revisiones, asignaciones o bitácora); si tiene historial, desactívalo
         para conservar la trazabilidad. Los usuarios base del sistema (admin, admin_ops,
         admin_validacion, admin_tesoreria, val_tesoreria) no se pueden eliminar.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Cargos de Tesorería: las funciones de la Tesorería (validador, altas,
+ * confirmador, fondeador) se asignan al personal con casillas de verificación.
+ * Todos son tesoreros: cada persona puede tener uno o varios cargos y cada
+ * cargo puede recaer en una o varias personas (basta marcar la misma columna
+ * en varias filas). El cargo otorga las mismas funciones que su rol
+ * equivalente; el cambio surte efecto cuando la persona vuelve a iniciar
+ * sesión. Lo gestionan el Administrador y el Administrador de Tesorería.
+ */
+function VistaCargos({ actual }: { actual: Usuario }) {
+  const [personal, setPersonal] = useState<UsuarioAdmin[]>([]);
+  const [error, setError] = useState("");
+  const [mensaje, setMensaje] = useState("");
+  /** Cambios sin guardar por usuario (id → cargos elegidos). */
+  const [pendientes, setPendientes] = useState<Record<number, Cargo[]>>({});
+
+  const cargar = () =>
+    api
+      .personalCargos()
+      .then(({ personal }) => {
+        setPersonal(personal);
+        setPendientes({});
+      })
+      .catch((err: Error) => setError(err.message));
+
+  useEffect(() => {
+    cargar();
+  }, []);
+
+  const cargosElegidos = (u: UsuarioAdmin): Cargo[] => pendientes[u.id] ?? u.cargos ?? [];
+
+  const cambiado = (u: UsuarioAdmin): boolean => {
+    if (!(u.id in pendientes)) return false;
+    const originales = [...(u.cargos ?? [])].sort().join(",");
+    const nuevos = [...cargosElegidos(u)].sort().join(",");
+    return originales !== nuevos;
+  };
+
+  const alternar = (u: UsuarioAdmin, cargo: Cargo) => {
+    const actuales = cargosElegidos(u);
+    const nuevos = actuales.includes(cargo)
+      ? actuales.filter((c) => c !== cargo)
+      : [...actuales, cargo];
+    setPendientes({ ...pendientes, [u.id]: nuevos });
+  };
+
+  const guardar = async (u: UsuarioAdmin) => {
+    try {
+      const elegidos = cargosElegidos(u);
+      await api.guardarCargos(u.id, elegidos);
+      setMensaje(
+        `Cargos de '${u.username}' guardados${elegidos.length ? ": " + elegidos.map((c) => ETIQUETAS_CARGO[c]).join(", ") : " (ninguno)"}. La persona debe volver a iniciar sesión para verlos.`
+      );
+      setError("");
+      cargar();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  return (
+    <>
+      <h2>Cargos de Tesorería</h2>
+      <p className="subtitulo">
+        Todos son tesoreros; cada uno puede tener uno o varios cargos y un cargo puede
+        asignarse a varias personas. Marca las casillas de cada persona y guarda.
+      </p>
+      {error && <div className="error">{error}</div>}
+      {mensaje && <div className="exito-msg">{mensaje}</div>}
+      <div className="panel">
+        <table>
+          <thead>
+            <tr>
+              <th>Persona</th>
+              <th>Rol</th>
+              {CARGOS.map((c) => (
+                <th key={c} style={{ textAlign: "center" }}>
+                  {ETIQUETAS_CARGO[c]}
+                </th>
+              ))}
+              <th>Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {personal.map((u) => (
+              <tr key={u.id} style={{ opacity: u.activo === 1 ? 1 : 0.55 }}>
+                <td>
+                  <strong>{u.nombre}</strong>
+                  <br />
+                  <span style={{ color: "var(--tenue)", fontSize: "0.8rem" }}>{u.username}</span>
+                  {u.activo !== 1 && (
+                    <span style={{ color: "var(--peligro)", fontSize: "0.78rem" }}> (desactivado)</span>
+                  )}
+                </td>
+                <td>{ETIQUETAS_ROL[u.rol]}</td>
+                {CARGOS.map((c) => (
+                  <td key={c} style={{ textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      aria-label={`${ETIQUETAS_CARGO[c]} — ${u.username}`}
+                      checked={cargosElegidos(u).includes(c)}
+                      disabled={u.activo !== 1}
+                      onChange={() => alternar(u, c)}
+                    />
+                  </td>
+                ))}
+                <td>
+                  {cambiado(u) ? (
+                    <button className="btn exito" onClick={() => void guardar(u)}>
+                      Guardar
+                    </button>
+                  ) : (
+                    <span style={{ color: "var(--tenue)", fontSize: "0.8rem" }}>sin cambios</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {personal.length === 0 && (
+              <tr>
+                <td colSpan={2 + CARGOS.length + 1} className="vacio">
+                  Sin personal de Tesorería.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ color: "var(--tenue)", fontSize: "0.82rem" }}>
+        Los cargos otorgan las mismas funciones que su rol equivalente: Validador → valida
+        operaciones de Tesorería; Altas → registra altas bancarias y portales; Confirmador →
+        confirma depósitos; Fondeador → libera operaciones a Tesorería. Cada persona afectada
+        debe cerrar sesión y volver a entrar para cargar sus cargos nuevos.
       </p>
     </>
   );
@@ -5295,7 +5503,8 @@ function MatrizExcelAltas({
   recargar: number;
 }) {
   const puedeActuar =
-    usuario.rol === "altas" || usuario.rol === "admin_tesoreria" || usuario.rol === "admin";
+    usuario.rol === "altas" || usuario.rol === "admin_tesoreria" || usuario.rol === "admin" ||
+    tieneCargo(usuario, "altas");
   type Fila = import("./tipos").AltaBancaria & { portales: import("./tipos").AltaPortal[] };
   const [altas, setAltas] = useState<Fila[]>([]);
   const [portales, setPortales] = useState<Array<{ id: number; nombre: string }>>([]);
@@ -5579,7 +5788,9 @@ function MatrizExcelAltas({
 
 function VistaAltas({ usuario }: { usuario: Usuario }) {
   const esOperador = usuario.rol === "operacion";
-  const puedeResolver = usuario.rol === "altas" || usuario.rol === "admin_tesoreria" || usuario.rol === "admin";
+  const puedeResolver =
+    usuario.rol === "altas" || usuario.rol === "admin_tesoreria" || usuario.rol === "admin" ||
+    tieneCargo(usuario, "altas");
   const [altas, setAltas] = useState<AltaBancaria[]>([]);
   const [filtro, setFiltro] = useState("");
   const [error, setError] = useState("");
@@ -6684,7 +6895,7 @@ function VistaValidacion({ usuario }: { usuario: Usuario }) {
 
 function VistaTesoreria({ usuario }: { usuario: Usuario }) {
   const esAdmin = usuario.rol === "admin_tesoreria";
-  const esValidador = usuario.rol === "validador_tesoreria";
+  const esValidador = usuario.rol === "validador_tesoreria" || tieneCargo(usuario, "validador");
   const [aplicaciones, setAplicaciones] = useState<AplicacionRecurso[]>([]);
   const [depositos, setDepositos] = useState<Array<{
     movimiento_id: number;

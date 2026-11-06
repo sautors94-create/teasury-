@@ -57,6 +57,7 @@ import type {
   TrfResguardoSaldos,
   Usuario,
   UsuarioAdmin,
+  Cargo,
 } from "./tipos";
 
 let token: string | null = localStorage.getItem("token");
@@ -344,7 +345,13 @@ export const api = {
   // ---- Fase roles: administración y clientes ----
   usuarios: () => solicitar<{ usuarios: UsuarioAdmin[] }>("/usuarios"),
   ejecutivos: () => solicitar<{ ejecutivos: UsuarioAdmin[] }>("/usuarios/ejecutivos"),
-  crearUsuario: (datos: { username: string; nombre: string; rol: Rol; password: string }) =>
+  crearUsuario: (datos: {
+    username: string;
+    nombre: string;
+    rol: Rol;
+    password: string;
+    cargos?: Cargo[];
+  }) =>
     solicitar<{ usuario: UsuarioAdmin }>("/usuarios", {
       method: "POST",
       body: JSON.stringify(datos),
@@ -361,6 +368,15 @@ export const api = {
     }),
   eliminarUsuario: (id: number) =>
     solicitar<{ eliminado: boolean; username: string }>(`/usuarios/${id}`, { method: "DELETE" }),
+
+  // ---- Cargos de Tesorería (funciones asignables a los tesoreros) ----
+  personalCargos: () =>
+    solicitar<{ personal: UsuarioAdmin[]; cargos_posibles: Cargo[] }>("/usuarios/cargos"),
+  guardarCargos: (id: number, cargos: Cargo[]) =>
+    solicitar<{ usuario: UsuarioAdmin; nota: string }>(`/usuarios/${id}/cargos`, {
+      method: "PATCH",
+      body: JSON.stringify({ cargos }),
+    }),
   clientes: () => solicitar<{ clientes: Cliente[] }>("/clientes"),
   crearCliente: (datos: { nombre: string; rfc?: string; contacto?: string; notas?: string }) =>
     solicitar<{ cliente: Cliente }>("/clientes", { method: "POST", body: JSON.stringify(datos) }),

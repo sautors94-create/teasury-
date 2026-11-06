@@ -17,7 +17,44 @@ IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
 regenera automáticamente con un solo comando, ver paso 3).
 
 
-── NOVEDADES DE ESTA VERSIÓN (v8) ─────────────────────────────
+── NOVEDADES DE ESTA VERSIÓN (v9) ─────────────────────────────
+
+  · CARGOS DE TESORERÍA — FUNCIONES ASIGNABLES A LAS PERSONAS
+    Las funciones de la Tesorería (validador, altas, confirmador,
+    fondeador) ya no son “puestos rígidos”: son CARGOS que se
+    asignan al personal con casillas de verificación.
+      - TODOS SON TESOREROS: una persona es tesorero y puede
+        tener 1 o más cargos a la vez (p. ej. Fondeador +
+        Confirmador), y un mismo cargo puede asignarse a
+        varias personas (basta marcar la misma columna en
+        varias filas).
+      - NUEVA SECCIÓN “CARGOS” en el menú (la ven el
+        Administrador y el Admin de Tesorería): tabla del
+        personal de Tesorería con UNA COLUMNA DE CASILLAS por
+        cargo — Validador | Altas | Confirmador | Fondeador —
+        y botón “Guardar” por persona cuando hay cambios.
+      - EL CARGO DA LAS MISMAS FUNCIONES QUE SU ROL
+        EQUIVALENTE: con el cargo Fondeador la persona ve el
+        menú Fondeo, ve el plan de flujos y puede LIBERAR
+        operaciones; con Altas puede resolver altas bancarias
+        y portales; con Confirmador entra a Confirmación de
+        depósitos; con Validador entra a Tesorería con visión
+        completa.
+      - EN EL ALTA DE USUARIO (Usuarios, admin) también se
+        pueden marcar los cargos al crear un tesorero.
+      - La barra lateral muestra el nombre del rol y CHIPS con
+        los cargos de la persona; la pantalla Usuarios también
+        lista los cargos de cada uno.
+      - Detalle técnico: los cargos viajan en la sesión; la
+        persona afectada debe CERRAR SESIÓN Y VOLVER A ENTRAR
+        para cargar sus cargos nuevos. Cada cambio queda en la
+        bitácora de Auditoría (usuario_cargos). Migración
+        automática: las bases existentes ganan la columna y el
+        cargo natural de cada rol (val_tesoreria→validador,
+        confirmador→confirmador, fondeador→fondeador,
+        altas→altas).
+
+── NOVEDADES DE LA VERSIÓN ANTERIOR (v8) ─────────────────────
 
   · ESTRUCTURAS: ARMADO IGUAL QUE EN EL EXCEL DE CONTADURÍA
     (así lo pidió Contaduría; el botón ahora se llama

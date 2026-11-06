@@ -78,7 +78,16 @@ const TABLAS_A_LIMPIAR = [
   "sync_envios",
 ];
 
-/** [username, nombre, rol] — contraseña = username. */
+// Cargos de Tesorería de ejemplo para los tesoreros de prueba (1 o más por
+// persona: son todos tesoreros, cada uno puede acumular cargos distintos).
+const CARGOS_TESOREROS: string[][] = [
+  ["fondeador"],
+  ["confirmador"],
+  ["validador", "altas"],
+  [],
+  ["fondeador", "validador"],
+];
+
 const NUEVOS_USUARIOS: Array<[string, string, string]> = [
   ...Array.from({ length: 5 }, (_, i): [string, string, string] => [
     `operador${i + 1}`,
@@ -206,11 +215,20 @@ function main(): void {
 
     // 6) Usuarios de prueba (contraseña = username).
     const insertarUsuario = db.prepare(
-      "INSERT INTO usuarios (username, password_hash, nombre, rol) VALUES (?, ?, ?, ?)"
+      "INSERT INTO usuarios (username, password_hash, nombre, rol, cargos) VALUES (?, ?, ?, ?, ?)"
     );
     const ids = new Map<string, number>();
+    let indiceTesorero = 0;
     for (const [username, nombre, rol] of NUEVOS_USUARIOS) {
-      const r = insertarUsuario.run(username, bcrypt.hashSync(username, 10), nombre, rol);
+      const esTesorero = rol === "tesoreria";
+      const cargos = esTesorero ? CARGOS_TESOREROS[indiceTesorero++ % CARGOS_TESOREROS.length] : [];
+      const r = insertarUsuario.run(
+        username,
+        bcrypt.hashSync(username, 10),
+        nombre,
+        rol,
+        JSON.stringify(cargos)
+      );
       ids.set(username, Number(r.lastInsertRowid));
     }
 

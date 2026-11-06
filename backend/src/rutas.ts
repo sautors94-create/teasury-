@@ -16,7 +16,12 @@ import {
   TABLAS_SYNC,
   TIPOS_CUENTA,
   TRANSICIONES,
+  CARGO_A_ROL,
+  CARGOS,
+  ROLES_TESORERIA,
+  parsearCargos,
   type CalculosFlujo,
+  type Cargo,
   type EstadoOperacion,
   type Operacion,
   type Revision,
@@ -29,7 +34,27 @@ interface FilaUsuario {
   password_hash: string;
   nombre: string;
   rol: Rol;
+  cargos: string;
   activo: number;
+}
+
+/**
+ * Roles efectivos de una sesión: su rol base más el rol equivalente de cada
+ * cargo de Tesorería asignado (validador→validador_tesoreria, altas→altas,
+ * confirmador→confirmador, fondeador→fondeador).
+ */
+function rolesEfectivos(u: { rol: Rol; cargos?: string | Cargo[] | null }): Rol[] {
+  const bruto = Array.isArray(u.cargos) ? u.cargos : parsearCargos(u.cargos as string | null);
+  return [u.rol, ...bruto.map((c) => CARGO_A_ROL[c])];
+}
+
+/**
+ * El analista de Tesorería "puro": es a quien se le acota el alcance de
+ * cuentas a sus asignaciones. Si el usuario tiene el cargo 'validador' se
+ * comporta como validador_tesoreria (visión completa) y no se le acota.
+ */
+function esAnalistaTesoreria(u: { rol: Rol; cargos?: string | Cargo[] | null }): boolean {
+  return u.rol === "tesoreria" && !rolesEfectivos(u).includes("validador_tesoreria");
 }
 
 /**
@@ -721,7 +746,13 @@ export function crearRouter(db: Database): Router {
       res.status(401).json({ error: "Credenciales inválidas" });
       return;
     }
-    const usuario = { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol };
+    const usuario = {
+      id: u.id,
+      username: u.username,
+      nombre: u.nombre,
+      rol: u.rol,
+      cargos: parsearCargos(u.cargos),
+    };
     res.json({ token: firmarToken(usuario), usuario });
   });
 
@@ -796,19 +827,46 @@ export function crearRouter(db: Database): Router {
         )`
       );
       params.push(req.usuario!.id, req.usuario!.id);
-    } else if (rol === "fondeador") {
-      // El Fondeador planifica el efectivo: ve las por validar y las ya validadas.
-      filtros.push(
-        "o.estado IN ('en_validacion','observada','pendiente_direccion','aprobada','en_pago','pagada')"
+    } else {
+      // Cargos de Tesorería: los alcances se calculan con los roles efectivos
+      // (rol base + rol equivalente de cada cargo). Un tesorero con varios
+      // cargos ve la UNIÓN de los alcances de cada cargo.
+      const roles = rolesEfectivos(req.usuario!);
+      const visionTotal = roles.some((r) =>
+        [
+          "admin",
+          "admin_operaciones",
+          "admin_validacion",
+          "admin_tesoreria",
+          "validador_tesoreria",
+          "direccion",
+          "auditoria",
+          "altas",
+          "contaduria",
+        ].includes(r)
       );
-    } else if (rol === "tesoreria") {
-      // El analista de Tesorería sólo ve lo liberado por el Tesorero Fondeador.
-      filtros.push("o.liberada_en IS NOT NULL");
-    } else if (rol === "confirmador") {
-      // El Confirmador ve sólo operaciones con depósitos por confirmar.
-      filtros.push(
-        "EXISTS (SELECT 1 FROM operaciones_depositos od WHERE od.operacion_id = o.id AND od.validado_por IS NULL)"
-      );
+      if (!visionTotal) {
+        const alcances: string[] = [];
+        if (roles.includes("fondeador")) {
+          // El Fondeador planifica el efectivo: ve las por validar y las ya validadas.
+          alcances.push(
+            "o.estado IN ('en_validacion','observada','pendiente_direccion','aprobada','en_pago','pagada')"
+          );
+        }
+        if (roles.includes("tesoreria")) {
+          // El analista de Tesorería sólo ve lo liberado por el Tesorero Fondeador.
+          alcances.push("o.liberada_en IS NOT NULL");
+        }
+        if (roles.includes("confirmador")) {
+          // El Confirmador ve sólo operaciones con depósitos por confirmar.
+          alcances.push(
+            "EXISTS (SELECT 1 FROM operaciones_depositos od WHERE od.operacion_id = o.id AND od.validado_por IS NULL)"
+          );
+        }
+        if (alcances.length > 0) {
+          filtros.push(`(${alcances.join(" OR ")})`);
+        }
+      }
     }
     if (typeof estado === "string" && estado) {
       filtros.push("estado = ?");
@@ -3474,7 +3532,7 @@ export function crearRouter(db: Database): Router {
       ) {
         where = "1=1";
       }
-      if (req.usuario!.rol === "tesoreria" && tesoreroTieneAsignaciones(db, req.usuario!.id)) {
+      if (esAnalistaTesoreria(req.usuario!) && tesoreroTieneAsignaciones(db, req.usuario!.id)) {
         where = `c.activa = 1 AND c.id IN (
           SELECT cuenta_id FROM cuentas_asignaciones WHERE tesorero_id = ? AND activo = 1 AND cerrado_en IS NULL
           UNION
@@ -4192,7 +4250,7 @@ export function crearRouter(db: Database): Router {
       // Alcance §5.3: igual que el listado — con asignaciones vigentes, el
       // tesorero sólo consulta sus cuentas (o las que cubre temporalmente).
       if (
-        req.usuario!.rol === "tesoreria" &&
+        esAnalistaTesoreria(req.usuario!) &&
         tesoreroTieneAsignaciones(db, req.usuario!.id) &&
         !cuentaVisibleParaTesorero(db, id, req.usuario!.id)
       ) {
@@ -4245,7 +4303,7 @@ export function crearRouter(db: Database): Router {
       // Alcance §5.3: el tesorero carga movimientos de SUS cuentas asignadas
       // (o en cobertura). Sin asignaciones, mantiene el alcance histórico.
       if (
-        req.usuario!.rol === "tesoreria" &&
+        esAnalistaTesoreria(req.usuario!) &&
         tesoreroTieneAsignaciones(db, req.usuario!.id) &&
         !cuentaVisibleParaTesorero(db, idCuenta, req.usuario!.id)
       ) {
@@ -4305,7 +4363,7 @@ export function crearRouter(db: Database): Router {
       const idCuenta = Number(req.params.id);
       // Alcance §5.3: el tesorero carga movimientos de SUS cuentas (o cobertura).
       if (
-        req.usuario!.rol === "tesoreria" &&
+        esAnalistaTesoreria(req.usuario!) &&
         tesoreroTieneAsignaciones(db, req.usuario!.id) &&
         !cuentaVisibleParaTesorero(db, idCuenta, req.usuario!.id)
       ) {
@@ -4398,7 +4456,7 @@ export function crearRouter(db: Database): Router {
         params.push(`%${q}%`, `%${q}%`);
       }
       // Alcance §5.3: tesorero con asignaciones ve el concentrado de sus cuentas.
-      if (req.usuario!.rol === "tesoreria" && tesoreroTieneAsignaciones(db, req.usuario!.id)) {
+      if (esAnalistaTesoreria(req.usuario!) && tesoreroTieneAsignaciones(db, req.usuario!.id)) {
         donde.push(
           `m.cuenta_id IN (
             SELECT cuenta_id FROM cuentas_asignaciones WHERE tesorero_id = ? AND activo = 1 AND cerrado_en IS NULL
@@ -4464,7 +4522,7 @@ export function crearRouter(db: Database): Router {
         return;
       }
       if (
-        req.usuario!.rol === "tesoreria" &&
+        esAnalistaTesoreria(req.usuario!) &&
         tesoreroTieneAsignaciones(db, req.usuario!.id) &&
         !cuentaVisibleParaTesorero(db, mov.cuenta_id, req.usuario!.id)
       ) {
@@ -4536,7 +4594,7 @@ export function crearRouter(db: Database): Router {
         return;
       }
       if (
-        req.usuario!.rol === "tesoreria" &&
+        esAnalistaTesoreria(req.usuario!) &&
         tesoreroTieneAsignaciones(db, req.usuario!.id) &&
         !cuentaVisibleParaTesorero(db, mov.cuenta_id, req.usuario!.id)
       ) {
@@ -5683,9 +5741,40 @@ export function crearRouter(db: Database): Router {
   // NO tiene permisos operativos-financieros (no captura, no paga, no valida).
   r.get("/usuarios", autenticar, requiereRol("admin"), (_req, res) => {
     const filas = db
-      .prepare("SELECT id, username, nombre, rol, activo FROM usuarios ORDER BY id")
-      .all();
-    res.json({ usuarios: filas });
+      .prepare("SELECT id, username, nombre, rol, cargos, activo FROM usuarios ORDER BY id")
+      .all() as Array<FilaUsuario & { activo: number }>;
+    res.json({
+      usuarios: filas.map((u) => ({
+        id: u.id,
+        username: u.username,
+        nombre: u.nombre,
+        rol: u.rol,
+        cargos: parsearCargos(u.cargos),
+        activo: u.activo,
+      })),
+    });
+  });
+
+  // Personal de Tesorería con sus cargos (pantalla de Cargos de Tesorería).
+  r.get("/usuarios/cargos", autenticar, requiereRol("admin", "admin_tesoreria"), (_req, res) => {
+    const filas = db
+      .prepare(
+        `SELECT id, username, nombre, rol, cargos, activo FROM usuarios
+         WHERE rol IN (${ROLES_TESORERIA.map(() => "?").join(",")})
+         ORDER BY activo DESC, nombre`
+      )
+      .all(...ROLES_TESORERIA) as Array<FilaUsuario & { activo: number }>;
+    res.json({
+      personal: filas.map((u) => ({
+        id: u.id,
+        username: u.username,
+        nombre: u.nombre,
+        rol: u.rol,
+        cargos: parsearCargos(u.cargos),
+        activo: u.activo,
+      })),
+      cargos_posibles: CARGOS,
+    });
   });
 
   // Ejecutivos de Operaciones (para asignaciones de clientes).
@@ -5704,7 +5793,7 @@ export function crearRouter(db: Database): Router {
   );
 
   r.post("/usuarios", autenticar, usuarioVivo, requiereRol("admin"), (req, res) => {
-    const { username, nombre, rol, password } = req.body ?? {};
+    const { username, nombre, rol, password, cargos } = req.body ?? {};
     const errores: string[] = [];
     if (typeof username !== "string" || !/^[a-zA-Z0-9_.-]{3,30}$/.test(username.trim()))
       errores.push("username requerido (3-30 caracteres: letras, números, . _ -)");
@@ -5714,6 +5803,25 @@ export function crearRouter(db: Database): Router {
       errores.push(`rol inválido (${ROLES.join(" | ")})`);
     if (typeof password !== "string" || password.length < 4)
       errores.push("password requerido (mínimo 4 caracteres)");
+    // Cargos de Tesorería opcionales (0 o más) en el alta.
+    let cargosNorm: Cargo[] = [];
+    if (cargos !== undefined) {
+      if (
+        !Array.isArray(cargos) ||
+        cargos.some((c) => typeof c !== "string" || !CARGOS.includes(c as Cargo))
+      ) {
+        errores.push(`cargos inválidos (valores posibles: ${CARGOS.join(" | ")})`);
+      } else {
+        cargosNorm = [...new Set(cargos as Cargo[])];
+      }
+    }
+    if (
+      cargosNorm.length > 0 &&
+      typeof rol === "string" &&
+      !ROLES_TESORERIA.includes(rol as Rol)
+    ) {
+      errores.push("los cargos de Tesorería sólo aplican a personal de Tesorería");
+    }
     if (errores.length) {
       res.status(400).json({ error: "Datos inválidos", detalles: errores });
       return;
@@ -5724,18 +5832,23 @@ export function crearRouter(db: Database): Router {
       return;
     }
     const raiz = db
-      .prepare("INSERT INTO usuarios (username, password_hash, nombre, rol) VALUES (?, ?, ?, ?)")
-      .run(username.trim(), bcrypt.hashSync(password, 10), nombre.trim(), rol);
+      .prepare(
+        "INSERT INTO usuarios (username, password_hash, nombre, rol, cargos) VALUES (?, ?, ?, ?, ?)"
+      )
+      .run(username.trim(), bcrypt.hashSync(password, 10), nombre.trim(), rol, JSON.stringify(cargosNorm));
     registrarAuditoria(
       db,
       req.usuario!.id,
       "usuario_creado",
-      `Alta de usuario '${username.trim()}' con rol '${rol}'`
+      `Alta de usuario '${username.trim()}' con rol '${rol}'` +
+        (cargosNorm.length ? ` y cargos: ${cargosNorm.join(", ")}` : "")
     );
     const u = db
-      .prepare("SELECT id, username, nombre, rol, activo FROM usuarios WHERE id = ?")
-      .get(raiz.lastInsertRowid);
-    res.status(201).json({ usuario: u });
+      .prepare("SELECT id, username, nombre, rol, cargos, activo FROM usuarios WHERE id = ?")
+      .get(raiz.lastInsertRowid) as FilaUsuario & { activo: number };
+    res.status(201).json({
+      usuario: { ...u, cargos: parsearCargos(u.cargos) },
+    });
   });
 
   r.patch("/usuarios/:id/estado", autenticar, usuarioVivo, requiereRol("admin"), (req, res) => {
@@ -5812,6 +5925,67 @@ export function crearRouter(db: Database): Router {
     );
     res.json({ usuario: { ...u, rol } });
   });
+
+  /**
+   * Cargos de Tesorería (funciones asignables): reemplaza el juego completo de
+   * cargos del usuario. Un tesorero puede tener uno o varios cargos
+   * (validador, altas, confirmador, fondeador); un array vacío los quita todos.
+   * Lo asignan el Administrador y el Administrador de Tesorería; los cargos
+   * sólo aplican a personal de Tesorería. El usuario afectado debe volver a
+   * iniciar sesión para cargar sus nuevos cargos en su token.
+   */
+  r.patch(
+    "/usuarios/:id/cargos",
+    autenticar,
+    usuarioVivo,
+    requiereRol("admin", "admin_tesoreria"),
+    (req, res) => {
+      const { cargos } = req.body ?? {};
+      if (
+        !Array.isArray(cargos) ||
+        cargos.some((c) => typeof c !== "string" || !CARGOS.includes(c as Cargo))
+      ) {
+        res.status(400).json({
+          error: `cargos inválidos: se espera un arreglo con valores ${CARGOS.join(" | ")} (puede ser vacío)`,
+        });
+        return;
+      }
+      const id = Number(req.params.id);
+      const u = db
+        .prepare("SELECT id, username, nombre, rol, cargos, activo FROM usuarios WHERE id = ?")
+        .get(id) as FilaUsuario & { activo: number } | undefined;
+      if (!u) {
+        res.status(404).json({ error: "Usuario no encontrado" });
+        return;
+      }
+      if (!ROLES_TESORERIA.includes(u.rol)) {
+        res.status(409).json({
+          error: `Los cargos de Tesorería sólo se asignan a personal de Tesorería. '${u.username}' tiene rol '${u.rol}'`,
+        });
+        return;
+      }
+      const nuevos = [...new Set(cargos as Cargo[])];
+      const previos = parsearCargos(u.cargos);
+      db.prepare("UPDATE usuarios SET cargos = ? WHERE id = ?").run(JSON.stringify(nuevos), id);
+      registrarAuditoria(
+        db,
+        req.usuario!.id,
+        "usuario_cargos",
+        `Usuario '${u.username}': cargos [${previos.join(", ") || "ninguno"}] → [${nuevos.join(", ") || "ninguno"}]`
+      );
+      res.json({
+        usuario: {
+          id: u.id,
+          username: u.username,
+          nombre: u.nombre,
+          rol: u.rol,
+          cargos: nuevos,
+          activo: u.activo,
+        },
+        nota: "El usuario debe volver a iniciar sesión para ver sus nuevos cargos",
+      });
+    }
+  );
 
   /**
    * Eliminación definitiva de un usuario (Administrador del sistema, §8.1).
