@@ -17,7 +17,40 @@ IMPORTANTE: node_modules NO viene incluido (pesa 436 MB y se
 regenera automáticamente con un solo comando, ver paso 3).
 
 
-── NOVEDADES DE ESTA VERSIÓN (v7) ─────────────────────────────
+── NOVEDADES DE ESTA VERSIÓN (v8) ─────────────────────────────
+
+  · ESTRUCTURAS: ARMADO IGUAL QUE EN EL EXCEL DE CONTADURÍA
+    (así lo pidió Contaduría; el botón ahora se llama
+    "Armar estructura" y el formulario va por pasos):
+      - PASO 1 · Seleccionas la CUENTA de Tesorería y su nombre
+        se toma como razón social (editable).
+      - PASO 2 · Le CAMBIAS EL TIPO con un selector: FRENTE o
+        RB (flujo). Si es FRENTE, esa cuenta queda como el
+        FRENTE para TODAS LAS RB (FLUJOS) que se agreguen
+        después. Si es RB, el sistema te asigna por omisión el
+        ÚLTIMO frente agregado (puedes cambiarlo en "Frente al
+        que pertenece").
+      - PASO 3 · El IMPORTE MÁXIMO PARA BAJAR POR MES ya no se
+        escribe: SE SELECCIONA con dos listas — "de un [X %] a
+        un [Y %] % del flujo" (por ejemplo de un 20 a un 30 %).
+        Se guarda con el mismo texto del Excel ("de un 20 a un
+        30 % del flujo").
+      - PASOS 4 y 5 · Los datos generales, y los trámites y
+        bancos con CASILLAS DE VERIFICACIÓN (SUCURSAL, REPSE
+        2023/2024/2025, INE, TIANGUIS DIGITAL, COMPRA NET,
+        padrones, CFE, INM, RP, ISN…).
+      - LA TABLA ahora es estilo Excel, con las MISMAS COLUMNAS
+        del formato (GIRO, NÚCLEO DE FRENTES, RAZÓN SOCIAL,
+        TIPO, EMPRESA (FRENTE), IMPORTE MÁXIMO PARA BAJAR POR
+        MES, TOTAL DE CUENTAS y una columna de casillas por cada
+        trámite). Cada FRENTE aparece resaltado y TODAS SUS RB
+        agrupadas debajo con una flecha (↳), en el mismo orden
+        del Excel. Los valores heredados que no siguen el
+        formato "de un X a un Y %" se editan como texto libre.
+  · Lo demás queda igual que en v7 (Resguardos, 1contaduria,
+    comprobantes, cuentas, layout 4 columnas, pronóstico…).
+
+── NOVEDADES DE LA VERSIÓN ANTERIOR (v7) ──────────────────────
 
   · SECCIÓN RESGUARDOS (sustituye al apartado "Resguardo TRF"):
     está en el menú para Admin de Tesorería, Admin de
