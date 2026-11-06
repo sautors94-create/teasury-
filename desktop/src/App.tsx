@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, descargarConcentrado, getToken, setToken } from "./api";import FormatoOperaciones from "./FormatoOperaciones";
 import {
   descargarPlantillaCuentas,
@@ -8825,7 +8825,38 @@ function VistaTimbrado({ usuario }: { usuario: Usuario }) {
  * una fila por razón social (FRENTE, RB, FLUJOS, SOFOM) con giro, núcleo de
  * frentes, importe máximo para bajar por mes, bancos, trámites y el estatus.
  * Va ligada a las cuentas de Tesorería (cuenta_id). Contaduría edita; el
- * Administrador de Tesorería consulta, edita y activa/desactiva. */
+ * Administrador de Tesorería consulta, edita y activa/desactiva.
+ * Armado (como lo pide Contaduría): se selecciona la cuenta, se le cambia el
+ * tipo (FRENTE o RB/flujo); el frente queda para todas las RB que le siguen;
+ * el importe máximo se SELECCIONA (de un X% a un Y% del flujo) y el resto son
+ * casillas de verificación. */
+
+/** Porcentajes seleccionables del importe máximo para bajar por mes. */
+const PORCENTAJES_ESTRUCTURA = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100];
+
+/** 'de un 20 a un 30 % del flujo' → { desde: '20', hasta: '30' } (null si no coincide). */
+const parsearImporteEstructura = (txt: string): { desde: string; hasta: string } | null => {
+  const m = String(txt ?? "").match(/de\s+un\s+(\d{1,3})\s*a\s+un\s+(\d{1,3})\s*%/i);
+  return m ? { desde: m[1], hasta: m[2] } : null;
+};
+
+/** Encabezados cortos de las casillas de verificación (orden del Excel). */
+const ETIQUETAS_CORTAS_ESTRUCTURA: Record<string, string> = {
+  "SUCURSAL": "SUCURSAL",
+  "REPSE 2023": "REPSE 23",
+  "REPSE 2024": "REPSE 24",
+  "REPSE 2025": "REPSE 25",
+  "INE": "INE",
+  "TIANGUIS DIGITAL": "TIANGUIS",
+  "COMPRA NET": "COMPRA NET",
+  "PADRON DE PROVEEDORES MUNICIPAL QRO": "PDÓN MUN. QRO",
+  "PADRON PROVEEDORES ESTATAL QRO": "PDÓN EDO. QRO",
+  "PADRON PROVEEDOR PUEBLA": "PDÓN PUEBLA",
+  "CFE": "CFE",
+  "INM CONSTANCIA DE EMPLEADOR": "INM CTE.",
+  "RP": "RP",
+  "ISN": "ISN",
+};
 
 const vaciaEstructura = (): Record<string, unknown> => ({
   giro: "",
@@ -8860,6 +8891,11 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
   const [editId, setEditId] = useState<number | null>(null);
   const [verLayout, setVerLayout] = useState(false);
   const [cargandoLayout, setCargandoLayout] = useState(false);
+  // Importe máximo seleccionable: 'de un X a un Y % del flujo'. El texto libre
+  // sólo se usa al editar valores heredados que no siguen ese formato.
+  const [impDesde, setImpDesde] = useState("");
+  const [impHasta, setImpHasta] = useState("");
+  const [impLibre, setImpLibre] = useState(false);
 
   const cargar = () => {
     api
@@ -8884,13 +8920,74 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
       .catch(() => setCuentas([]));
   }, []);
 
+  const frentes = useMemo(() => estructuras.filter((x) => x.tipo === "FRENTE"), [estructuras]);
+  const ultimoFrente = useMemo(
+    () => (frentes.length ? frentes.reduce((a, b) => (b.id > a.id ? b : a)).razon_social : ""),
+    [frentes]
+  );
+
+  // Orden tipo Excel: cada FRENTE seguido de todas las RB (flujos) que le
+  // corresponden; las filas sin frente van al final.
+  const ordenadas = useMemo(() => {
+    const resto = estructuras.filter((x) => x.tipo !== "FRENTE");
+    const usadas = new Set<number>();
+    const salida: Estructura[] = [];
+    for (const f of frentes) {
+      salida.push(f);
+      usadas.add(f.id);
+      for (const r of resto) {
+        if (!usadas.has(r.id) && r.empresa && r.empresa === f.razon_social) {
+          salida.push(r);
+          usadas.add(r.id);
+        }
+      }
+    }
+    for (const r of resto) if (!usadas.has(r.id)) salida.push(r);
+    return salida;
+  }, [estructuras, frentes]);
+
+  const numColumnas =
+    7 + EXTRAS_ESTRUCTURA.length + 3 + (puedeEditar || puedeEstatus ? 1 : 0);
+
+  /** Paso 1: al seleccionar la cuenta se toma su nombre como razón social. */
+  const elegirCuenta = (valor: string) => {
+    setForm((f) => {
+      if (!f) return f;
+      const c = cuentas.find((x) => String(x.id) === valor);
+      return { ...f, cuenta_id: valor, razon_social: !editId && c ? c.nombre : String(f.razon_social) };
+    });
+  };
+
+  /** Paso 2: el FRENTE queda para todas las RB (flujos) que se agreguen después. */
+  const cambiarTipoEstructura = (tipo: string) => {
+    setForm((f) => {
+      if (!f) return f;
+      if (tipo === "FRENTE") return { ...f, tipo, empresa: String(f.razon_social || "") };
+      return { ...f, tipo, empresa: String(f.empresa || ultimoFrente) };
+    });
+  };
+
   const guardar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form) return;
     setError("");
     setMensaje("");
+    // Importe máximo: los selectores mandan ('de un X a un Y % del flujo');
+    // el texto libre sólo se usa para valores heredados con otro formato.
+    let importeMaximo = String(form.importe_maximo ?? "").trim();
+    if (impDesde && impHasta) {
+      importeMaximo = `de un ${impDesde} a un ${impHasta} % del flujo`;
+    } else if (!impLibre) {
+      setError("Selecciona el importe máximo para bajar por mes: de qué % a qué % del flujo.");
+      return;
+    }
     const datos = {
       ...form,
+      importe_maximo: importeMaximo,
+      empresa:
+        String(form.tipo) === "FRENTE" && !String(form.empresa ?? "").trim()
+          ? String(form.razon_social).toUpperCase()
+          : String(form.empresa ?? ""),
       estatus_operacion: form.estatus_operacion ? 1 : 0,
       cuenta_id: form.cuenta_id ? Number(form.cuenta_id) : null,
       total_cuentas: Number(form.total_cuentas) || 0,
@@ -8911,6 +9008,9 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
       }
       setForm(null);
       setEditId(null);
+      setImpDesde("");
+      setImpHasta("");
+      setImpLibre(false);
       cargar();
     } catch (err) {
       setError((err as Error).message);
@@ -8959,9 +9059,10 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
     <>
       <h2>Estructuras de cuentas</h2>
       <p style={{ color: "var(--tenue)", fontSize: "0.88rem", maxWidth: 980 }}>
-        Catálogo del negocio (formato Ejercicio 2026): frentes y sus RB/flujos, con giro, núcleo,
-        importe máximo para bajar por mes, bancos y trámites. Cada estructura va ligada a su cuenta
-        de Tesorería; {puedeEstatus ? "desde aquí se ve cuáles están activas y se activan/desactivan." : "el estatus lo maneja el Administrador de Tesorería."}
+        Arma la estructura igual que en el Excel de Contaduría: seleccionas una cuenta, le cambias
+        el tipo (FRENTE o RB/flujo) y el frente queda para todas las RB que le siguen; el importe
+        máximo se selecciona (de un % a un % del flujo) y los trámites van con casillas de
+        verificación. {puedeEstatus ? "Desde aquí se ve cuáles están activas y se activan/desactivan." : "El estatus lo maneja el Administrador de Tesorería."}
       </p>
       {error && <div className="error">{error}</div>}
       {mensaje && <div className="exito-msg">{mensaje}</div>}
@@ -8991,10 +9092,13 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
               className="btn"
               onClick={() => {
                 setEditId(null);
+                setImpDesde("");
+                setImpHasta("");
+                setImpLibre(false);
                 setForm(vaciaEstructura());
               }}
             >
-              Nueva estructura
+              Armar estructura
             </button>
             <button className="btn secundario" onClick={() => setVerLayout((v) => !v)}>
               {verLayout ? "Cerrar layout" : "Cargar layout (Excel)"}
@@ -9033,149 +9137,220 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
       )}
 
       {form && (
-        <form className="panel" onSubmit={guardar} style={{ maxWidth: 980 }}>
-          <h3 style={{ marginTop: 0 }}>{editId ? "Editar estructura" : "Nueva estructura"}</h3>
-          <div className="rejilla">
-            <div>
-              <label>Razón social *</label>
-              <input
-                value={String(form.razon_social)}
-                onChange={(e) => setForm({ ...form, razon_social: e.target.value })}
-                required
-              />
+        <form className="panel" onSubmit={guardar} style={{ maxWidth: 1100 }}>
+          <h3 style={{ marginTop: 0 }}>{editId ? "Editar estructura" : "Armar estructura"}</h3>
+          <p style={{ fontSize: "0.85rem", color: "var(--tenue)", margin: "0.2rem 0 0.8rem" }}>
+            Selecciona la cuenta, cambia su tipo (frente o flujo) y elige los valores con
+            selectores y casillas de verificación, igual que en el Excel de Contaduría.
+          </p>
+          <div className="pasos-estructura">
+            <div className="paso-estructura">
+              <h4>1 · Cuenta de Tesorería</h4>
+              <div className="rejilla">
+                <div>
+                  <label>Cuenta *</label>
+                  <select value={String(form.cuenta_id)} onChange={(e) => elegirCuenta(e.target.value)}>
+                    <option value="">— Selecciona una cuenta —</option>
+                    {cuentas.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.nombre} ({c.banco})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label>Razón social *</label>
+                  <input
+                    value={String(form.razon_social)}
+                    onChange={(e) => setForm({ ...form, razon_social: e.target.value })}
+                    placeholder="Se toma de la cuenta seleccionada"
+                    required
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <label>Tipo *</label>
-              <select value={String(form.tipo)} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
-                <option value="FRENTE">FRENTE</option>
-                <option value="RB">RB</option>
-                <option value="FLUJOS">FLUJOS</option>
-                <option value="SOFOM">SOFOM</option>
-              </select>
+
+            <div className="paso-estructura">
+              <h4>2 · Tipo en la estructura</h4>
+              <div className="rejilla">
+                <div>
+                  <label>Tipo *</label>
+                  <select value={String(form.tipo)} onChange={(e) => cambiarTipoEstructura(e.target.value)}>
+                    <option value="FRENTE">FRENTE</option>
+                    <option value="RB">RB (flujo)</option>
+                    {["FLUJOS", "SOFOM"].includes(String(form.tipo)) && (
+                      <option value={String(form.tipo)}>{String(form.tipo)} (heredado)</option>
+                    )}
+                  </select>
+                </div>
+                {String(form.tipo) !== "FRENTE" && (
+                  <div>
+                    <label>Frente al que pertenece</label>
+                    <select
+                      value={String(form.empresa)}
+                      onChange={(e) => setForm({ ...form, empresa: e.target.value })}
+                    >
+                      <option value="">— Sin frente —</option>
+                      {String(form.empresa) && !frentes.some((f) => f.razon_social === String(form.empresa)) && (
+                        <option value={String(form.empresa)}>{String(form.empresa)} (actual)</option>
+                      )}
+                      {frentes.map((f) => (
+                        <option key={f.id} value={f.razon_social}>
+                          {f.razon_social}
+                        </option>
+                      ))}
+                    </select>
+                    <small className="nota">
+                      {ultimoFrente
+                        ? `Por defecto se asigna el último frente agregado: ${ultimoFrente}.`
+                        : "Aún no hay frentes: agrega primero una cuenta como FRENTE."}
+                    </small>
+                  </div>
+                )}
+              </div>
+              <p className="nota">
+                {String(form.tipo) === "FRENTE"
+                  ? "Esta cuenta queda como FRENTE para todas las RB (flujos) que se agreguen después."
+                  : "Todas las RB (flujos) que siguen a un frente le corresponden a ese frente."}
+              </p>
             </div>
-            <div>
-              <label>Giro</label>
-              <input value={String(form.giro)} onChange={(e) => setForm({ ...form, giro: e.target.value })} />
-            </div>
-            <div>
-              <label>Núcleo de frentes</label>
-              <input value={String(form.nucleo)} onChange={(e) => setForm({ ...form, nucleo: e.target.value })} />
-            </div>
-            <div>
-              <label>Empresa (frente al que pertenece)</label>
-              <input
-                list="empresas-estructura"
-                value={String(form.empresa)}
-                onChange={(e) => setForm({ ...form, empresa: e.target.value })}
-              />
-              <datalist id="empresas-estructura">
-                {estructuras
-                  .filter((x) => x.tipo === "FRENTE")
-                  .map((x) => (
-                    <option key={x.id} value={x.razon_social} />
+
+            <div className="paso-estructura">
+              <h4>3 · Importe máximo para bajar por mes</h4>
+              <div className="selects-importe">
+                <span>de un</span>
+                <select value={impDesde} onChange={(e) => setImpDesde(e.target.value)}>
+                  <option value="">— % —</option>
+                  {PORCENTAJES_ESTRUCTURA.map((p) => (
+                    <option key={p} value={String(p)}>
+                      {p} %
+                    </option>
                   ))}
-              </datalist>
-            </div>
-            <div>
-              <label>Importe máximo para bajar por mes</label>
-              <input
-                value={String(form.importe_maximo)}
-                onChange={(e) => setForm({ ...form, importe_maximo: e.target.value })}
-                placeholder="de un 25 a un 30 % del flujo"
-              />
-            </div>
-            <div>
-              <label>Cuenta de Tesorería ligada</label>
-              <select value={String(form.cuenta_id)} onChange={(e) => setForm({ ...form, cuenta_id: e.target.value })}>
-                <option value="">— Sin ligar —</option>
-                {cuentas.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.nombre} ({c.banco})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label>Total de cuentas</label>
-              <input
-                type="number"
-                min={0}
-                value={String(form.total_cuentas)}
-                onChange={(e) => setForm({ ...form, total_cuentas: e.target.value })}
-              />
-            </div>
-            <div>
-              <label>Observaciones</label>
-              <input
-                value={String(form.observaciones)}
-                onChange={(e) => setForm({ ...form, observaciones: e.target.value })}
-              />
-            </div>
-            <div>
-              <label>Observaciones (trámites)</label>
-              <input
-                value={String(form.observaciones2)}
-                onChange={(e) => setForm({ ...form, observaciones2: e.target.value })}
-              />
-            </div>
-            <div style={{ display: "flex", alignItems: "center" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(form.estatus_operacion)}
-                  onChange={(e) => setForm({ ...form, estatus_operacion: e.target.checked })}
-                />
-                Estatus de operación (activa)
-              </label>
-            </div>
-          </div>
-
-          <h4 style={{ marginBottom: "0.2rem" }}>Bancos con cuenta</h4>
-          <div className="chips">
-            {BANCOS_ESTRUCTURA.map((b) => {
-              const activo = Boolean((form.bancos as Record<string, boolean>)[b]);
-              return (
-                <label key={b} className={`chip ${activo ? "chip-activo" : ""}`}>
+                </select>
+                <span>a un</span>
+                <select value={impHasta} onChange={(e) => setImpHasta(e.target.value)}>
+                  <option value="">— % —</option>
+                  {PORCENTAJES_ESTRUCTURA.map((p) => (
+                    <option key={p} value={String(p)}>
+                      {p} %
+                    </option>
+                  ))}
+                </select>
+                <span>% del flujo</span>
+                {impDesde && impHasta && Number(impHasta) < Number(impDesde) && (
+                  <span className="nota" style={{ color: "var(--peligro, #c62828)" }}>
+                    El % final es menor al inicial.
+                  </span>
+                )}
+              </div>
+              {impLibre && (
+                <div style={{ marginTop: "0.4rem" }}>
+                  <label>Importe (texto heredado)</label>
                   <input
-                    type="checkbox"
-                    checked={activo}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        bancos: { ...(form.bancos as Record<string, boolean>), [b]: e.target.checked },
-                      })
-                    }
+                    value={String(form.importe_maximo)}
+                    onChange={(e) => setForm({ ...form, importe_maximo: e.target.value })}
                   />
-                  {b}
-                </label>
-              );
-            })}
-          </div>
+                </div>
+              )}
+              <p className="nota">Se guarda como «de un 20 a un 30 % del flujo», igual que en el Excel.</p>
+            </div>
 
-          <h4 style={{ marginBottom: "0.2rem" }}>Trámites y registros</h4>
-          <div className="chips">
-            {EXTRAS_ESTRUCTURA.map((x) => {
-              const activo = Boolean((form.extras as Record<string, boolean>)[x]);
-              return (
-                <label key={x} className={`chip ${activo ? "chip-activo" : ""}`}>
+            <div className="paso-estructura">
+              <h4>4 · Datos generales</h4>
+              <div className="rejilla">
+                <div>
+                  <label>Giro</label>
+                  <input value={String(form.giro)} onChange={(e) => setForm({ ...form, giro: e.target.value })} />
+                </div>
+                <div>
+                  <label>Núcleo de frentes</label>
+                  <input value={String(form.nucleo)} onChange={(e) => setForm({ ...form, nucleo: e.target.value })} />
+                </div>
+                <div>
+                  <label>Total de cuentas</label>
                   <input
-                    type="checkbox"
-                    checked={activo}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        extras: { ...(form.extras as Record<string, boolean>), [x]: e.target.checked },
-                      })
-                    }
+                    type="number"
+                    min={0}
+                    value={String(form.total_cuentas)}
+                    onChange={(e) => setForm({ ...form, total_cuentas: e.target.value })}
                   />
-                  {x}
-                </label>
-              );
-            })}
+                </div>
+                <div>
+                  <label>Observaciones</label>
+                  <input
+                    value={String(form.observaciones)}
+                    onChange={(e) => setForm({ ...form, observaciones: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label>Observaciones (trámites)</label>
+                  <input
+                    value={String(form.observaciones2)}
+                    onChange={(e) => setForm({ ...form, observaciones2: e.target.value })}
+                  />
+                </div>
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.estatus_operacion)}
+                      onChange={(e) => setForm({ ...form, estatus_operacion: e.target.checked })}
+                    />
+                    Estatus de operación (activa)
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="paso-estructura">
+              <h4>5 · Casillas de verificación</h4>
+              <h5 style={{ margin: "0.2rem 0" }}>Bancos con cuenta</h5>
+              <div className="chips">
+                {BANCOS_ESTRUCTURA.map((b) => {
+                  const activo = Boolean((form.bancos as Record<string, boolean>)[b]);
+                  return (
+                    <label key={b} className={`chip ${activo ? "chip-activo" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={activo}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            bancos: { ...(form.bancos as Record<string, boolean>), [b]: e.target.checked },
+                          })
+                        }
+                      />
+                      {b}
+                    </label>
+                  );
+                })}
+              </div>
+              <h5 style={{ margin: "0.4rem 0 0" }}>Trámites y registros</h5>
+              <div className="chips">
+                {EXTRAS_ESTRUCTURA.map((x) => {
+                  const activo = Boolean((form.extras as Record<string, boolean>)[x]);
+                  return (
+                    <label key={x} className={`chip ${activo ? "chip-activo" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={activo}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            extras: { ...(form.extras as Record<string, boolean>), [x]: e.target.checked },
+                          })
+                        }
+                      />
+                      {x}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           <div className="barra">
-            <button className="btn">Guardar estructura</button>
+            <button className="btn">{editId ? "Guardar cambios" : "Agregar a la estructura"}</button>
             <button
               type="button"
               className="btn secundario"
@@ -9194,45 +9369,58 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
         <table className="tabla-estructuras">
           <thead>
             <tr>
-              <th>Razón social</th>
-              <th>Tipo</th>
-              <th>Giro</th>
-              <th>Núcleo</th>
-              <th>Empresa</th>
-              <th>Importe máximo / mes</th>
-              <th style={{ textAlign: "right" }}>Ctas.</th>
-              <th>Bancos</th>
-              <th>Trámites</th>
-              <th>Cuenta ligada</th>
-              <th>Estatus</th>
+              <th>GIRO</th>
+              <th>NÚCLEO DE FRENTES</th>
+              <th>RAZÓN SOCIAL</th>
+              <th>TIPO</th>
+              <th>EMPRESA (FRENTE)</th>
+              <th>IMPORTE MÁXIMO PARA BAJAR POR MES</th>
+              <th style={{ textAlign: "right" }}>TOTAL DE CUENTAS</th>
+              {EXTRAS_ESTRUCTURA.map((x) => (
+                <th key={x} className="col-casilla" title={x}>
+                  {ETIQUETAS_CORTAS_ESTRUCTURA[x] ?? x}
+                </th>
+              ))}
+              <th>BANCOS</th>
+              <th>CUENTA LIGADA</th>
+              <th>ESTATUS</th>
               {(puedeEditar || puedeEstatus) && <th></th>}
             </tr>
           </thead>
           <tbody>
-            {estructuras.map((e) => {
+            {ordenadas.map((e) => {
+              const esFrente = e.tipo === "FRENTE";
+              const agrupada = !esFrente && !!e.empresa && frentes.some((f) => f.razon_social === e.empresa);
               const bancosOn = Object.entries(e.bancos)
                 .filter(([, v]) => v === 1)
                 .map(([k]) => k);
-              const extrasOn = Object.entries(e.extras)
-                .filter(([, v]) => v === 1)
-                .map(([k]) => k);
               return (
-                <tr key={e.id} className={e.estatus_operacion ? "" : "fila-inactiva"}>
-                  <td style={{ minWidth: 220 }}>
+                <tr
+                  key={e.id}
+                  className={`${esFrente ? "fila-frente" : ""} ${e.estatus_operacion ? "" : "fila-inactiva"}`}
+                >
+                  <td style={{ whiteSpace: "nowrap" }}>{e.giro || "—"}</td>
+                  <td style={{ maxWidth: 180 }}>{e.nucleo || "—"}</td>
+                  <td style={{ minWidth: 240 }}>
+                    {agrupada && <span className="rama-rb">↳ </span>}
                     <strong>{e.razon_social}</strong>
                     {e.observaciones && <div style={{ color: "var(--tenue)", fontSize: "0.78rem" }}>{e.observaciones}</div>}
                   </td>
                   <td>
                     <span className={`chip chip-${e.tipo.toLowerCase()}`}>{e.tipo}</span>
                   </td>
-                  <td>{e.giro || "—"}</td>
-                  <td style={{ maxWidth: 180 }}>{e.nucleo || "—"}</td>
                   <td style={{ maxWidth: 220 }}>{e.empresa || "—"}</td>
-                  <td style={{ maxWidth: 180 }}>{e.importe_maximo || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{e.importe_maximo || "—"}</td>
                   <td style={{ textAlign: "right" }}>{e.total_cuentas}</td>
-                  <td style={{ maxWidth: 200, fontSize: "0.78rem" }}>{bancosOn.join(", ") || "—"}</td>
-                  <td style={{ maxWidth: 200, fontSize: "0.78rem" }}>{extrasOn.join(", ") || "—"}</td>
-                  <td>{e.cuenta ?? "—"}</td>
+                  {EXTRAS_ESTRUCTURA.map((x) => (
+                    <td key={x} className="celda-casilla">
+                      <span className={`casilla ${e.extras[x] === 1 ? "on" : ""}`}>✓</span>
+                    </td>
+                  ))}
+                  <td style={{ maxWidth: 170, fontSize: "0.78rem" }}>
+                    {bancosOn.length ? bancosOn.map((b) => `✓ ${b}`).join("  ") : "—"}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>{e.cuenta ?? "—"}</td>
                   <td>
                     <strong style={{ color: e.estatus_operacion ? "var(--exito, #2e7d32)" : "var(--peligro, #c62828)" }}>
                       {e.estatus_operacion ? "Activa" : "Inactiva"}
@@ -9245,6 +9433,10 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
                           className="btn secundario"
                           onClick={() => {
                             setEditId(e.id);
+                            const imp = parsearImporteEstructura(String(e.importe_maximo ?? ""));
+                            setImpDesde(imp?.desde ?? "");
+                            setImpHasta(imp?.hasta ?? "");
+                            setImpLibre(!imp && String(e.importe_maximo ?? "").trim().length > 0);
                             setForm({
                               ...vaciaEstructura(),
                               ...e,
@@ -9282,7 +9474,7 @@ function VistaEstructuras({ usuario }: { usuario: Usuario }) {
             })}
             {estructuras.length === 0 && (
               <tr>
-                <td colSpan={puedeEditar || puedeEstatus ? 12 : 11} className="vacio">
+                <td colSpan={numColumnas} className="vacio">
                   Sin estructuras que coincidan con el filtro.
                 </td>
               </tr>

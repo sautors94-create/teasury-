@@ -640,3 +640,40 @@ table.fmt-tabla { border-collapse: separate; border-spacing: 0; font-size: 0.8re
 .chip-rb { background: #f4f0fa; border-color: #d3c6ea; }
 .chip-flujos { background: #eefaf1; border-color: #b9e2c4; }
 .chip-sofom { background: #fdf4ec; border-color: #ecd3b4; }
+
+/* Armado de estructuras por pasos (seleccionar cuenta → tipo → importe → casillas) */
+.pasos-estructura { display: flex; flex-direction: column; gap: 0.8rem; margin-bottom: 0.8rem; }
+.paso-estructura {
+  border: 1px solid var(--borde, #d7dde6);
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem 0.8rem;
+  background: #fbfcfe;
+}
+.paso-estructura > h4 { margin: 0 0 0.5rem; font-size: 0.92rem; color: var(--primario, #1f4e79); }
+.paso-estructura .nota { font-size: 0.8rem; color: var(--tenue, #6b7686); margin: 0.3rem 0 0; }
+.selects-importe { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; font-size: 0.95rem; }
+.selects-importe select { width: auto; flex: 0 0 auto; min-width: 104px; max-width: 140px; }
+.selects-importe span { white-space: nowrap; }
+
+/* Tabla de estructuras estilo Excel: columnas de casillas de verificación */
+.tabla-estructuras .col-casilla {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-align: center;
+  min-width: 56px;
+  max-width: 74px;
+  line-height: 1.15;
+  vertical-align: bottom;
+}
+.tabla-estructuras .celda-casilla { text-align: center; }
+.casilla {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px;
+  border: 1.5px solid #97a1b0; border-radius: 3px;
+  background: #fff; font-size: 0.72rem; line-height: 1;
+  color: transparent; font-weight: 700;
+}
+.casilla.on { color: var(--primario, #1f4e79); border-color: var(--primario, #1f4e79); background: #eef4fb; }
+.tabla-estructuras tr.fila-frente td { background: #f2f6fb; }
+.tabla-estructuras tr.fila-frente td:first-child { border-left: 3px solid var(--primario, #1f4e79); }
+.rama-rb { color: var(--tenue, #6b7686); font-weight: 700; }
